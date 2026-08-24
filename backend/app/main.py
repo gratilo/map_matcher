@@ -50,7 +50,7 @@ store = SessionStore()
 
 
 def _mapbox_source(user_token: str | None) -> str:
-    if user_token and user_token.strip() and effective_settings(user_token).mapbox_ready():
+    if user_token and user_token.strip():
         return "user"
     if get_settings().mapbox_ready():
         return "server"

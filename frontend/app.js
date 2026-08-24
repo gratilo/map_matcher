@@ -31,7 +31,6 @@
     anomalyList: document.getElementById("anomaly-list"),
     applyBtn: document.getElementById("apply-btn"),
     exportFormat: document.getElementById("export-format"),
-    health: document.getElementById("mapbox-btn"),
     mapboxBtn: document.getElementById("mapbox-btn"),
     mapboxDialog: document.getElementById("mapbox-dialog"),
     mapboxForm: document.getElementById("mapbox-form"),
