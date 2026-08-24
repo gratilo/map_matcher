@@ -26,7 +26,9 @@ class Settings(BaseSettings):
 
     def mapbox_ready(self) -> bool:
         token = self.mapbox_access_token.strip()
-        if not token:
+        if not token.startswith("pk."):
+            return False
+        if len(token) < 40:
             return False
         placeholders = ("your_mapbox_token", "pk.your_", "replace_me", "changeme")
         lowered = token.lower()
