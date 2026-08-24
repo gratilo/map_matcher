@@ -12,9 +12,16 @@ from app.analysis.anomalies import detect_anomalies
 from app.config import get_settings
 from app.export import export_track
 from app.geo import path_length_m
-from app.models import AnalysisResult, ApplyRepairsRequest, ApplyRepairsResponse
+from app.matching.mapbox import MapboxError
+from app.models import (
+    AnalysisResult,
+    ApplyRepairsRequest,
+    ApplyRepairsResponse,
+    ConnectRequest,
+    ConnectResponse,
+)
 from app.parsers.track_parser import parse_track
-from app.repair.engine import apply_repairs, build_repair_options
+from app.repair.engine import apply_repairs, build_manual_connect_options, build_repair_options
 from app.store import SessionStore, new_track_id
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -81,6 +88,45 @@ async def analyze(
     )
     store.put(analysis)
     return analysis
+
+
+@app.post("/api/connect", response_model=ConnectResponse)
+async def connect(body: ConnectRequest) -> ConnectResponse:
+    """Optional variant: build road routes between user-picked points A and B."""
+    settings = get_settings()
+    rec = store.get(body.track_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Track session not found or expired")
+
+    track = rec.repaired or rec.analysis.track
+    try:
+        options = await build_manual_connect_options(
+            track,
+            body.start_index,
+            body.end_index,
+            settings,
+            profile_hint=body.profile,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except MapboxError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if settings.mapbox_ready() and not any(o.method == "directions_fill" for o in options):
+        raise HTTPException(status_code=502, detail="Mapbox не вернул маршруты между A и B")
+
+    store.add_options(body.track_id, options)
+    connect_id = options[0].anomaly_id
+    lo, hi = sorted((body.start_index, body.end_index))
+    road_n = sum(1 for o in options if o.method == "directions_fill")
+    return ConnectResponse(
+        track_id=body.track_id,
+        connect_id=connect_id,
+        start_index=lo,
+        end_index=hi,
+        options=options,
+        message=f"Добавлен вариант соединения A→B: {road_n} маршрут(ов) по карте.",
+    )
 
 
 @app.post("/api/apply", response_model=ApplyRepairsResponse)

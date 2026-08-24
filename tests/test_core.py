@@ -82,3 +82,15 @@ def test_export_kml_nonempty():
     data = export_kml(track)
     assert b"LineString" in data
     assert b"37.618" in data
+
+
+def test_manual_connect_local_without_mapbox():
+    import asyncio
+    from app.repair.engine import build_manual_connect_options
+
+    track = Track(points=_pts(), source_format="gpx")
+    settings = Settings(mapbox_access_token="")
+    opts = asyncio.run(build_manual_connect_options(track, 1, 2, settings, "driving"))
+    assert len(opts) == 1
+    assert opts[0].method == "interpolate"
+    assert opts[0].anomaly_id.startswith("manual-")

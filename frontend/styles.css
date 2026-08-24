@@ -356,6 +356,83 @@ button:disabled {
   background: var(--fix);
 }
 
+.lede.small {
+  font-size: 0.88rem;
+}
+
+.manual-connect {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.pick-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.pick-card {
+  padding: 0.7rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.pick-card.active {
+  border-color: var(--accent);
+  background: rgba(226, 161, 74, 0.1);
+}
+
+.pick-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-bottom: 0.25rem;
+}
+
+.pick-card strong {
+  font-size: 0.86rem;
+  word-break: break-all;
+}
+
+.actions.stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+button.ghost,
+.use-gap-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  font-weight: 600;
+}
+
+.use-gap-btn {
+  width: 100%;
+  margin-top: 0.55rem;
+  font-size: 0.84rem;
+}
+
+button.ghost:hover:not(:disabled),
+.use-gap-btn:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: rgba(243, 240, 231, 0.35);
+  filter: none;
+}
+
+.manual-routes {
+  margin-top: 0.85rem;
+}
+
+.manual-routes h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  font-family: var(--display);
+}
+
 @keyframes pulse {
   0%,
   100% {
