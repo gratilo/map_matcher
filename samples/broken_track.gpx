@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="trackfix-sample" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>Broken mixed sample</name>
+    <trkseg>
+      <trkpt lat="55.751244" lon="37.618423"><ele>140</ele><time>2024-06-01T10:00:00Z</time></trkpt>
+      <trkpt lat="55.752000" lon="37.620000"><ele>141</ele><time>2024-06-01T10:00:20Z</time></trkpt>
+      <trkpt lat="55.752800" lon="37.621500"><ele>142</ele><time>2024-06-01T10:00:40Z</time></trkpt>
+      <trkpt lat="55.753500" lon="37.623000"><ele>143</ele><time>2024-06-01T10:01:00Z</time></trkpt>
+      <!-- GAP: jump ahead in space + time (lost signal) -->
+      <trkpt lat="55.760000" lon="37.640000"><ele>150</ele><time>2024-06-01T10:05:00Z</time></trkpt>
+      <trkpt lat="55.760800" lon="37.641200"><ele>151</ele><time>2024-06-01T10:05:20Z</time></trkpt>
+      <trkpt lat="55.761500" lon="37.642500"><ele>152</ele><time>2024-06-01T10:05:40Z</time></trkpt>
+      <!-- SPIKE: impossible teleport -->
+      <trkpt lat="55.780000" lon="37.700000"><ele>160</ele><time>2024-06-01T10:05:45Z</time></trkpt>
+      <trkpt lat="55.762200" lon="37.643800"><ele>153</ele><time>2024-06-01T10:06:05Z</time></trkpt>
+      <trkpt lat="55.763000" lon="37.645000"><ele>154</ele><time>2024-06-01T10:06:25Z</time></trkpt>
+      <!-- NOISE zigzag -->
+      <trkpt lat="55.763050" lon="37.645800"><ele>154</ele><time>2024-06-01T10:06:35Z</time></trkpt>
+      <trkpt lat="55.762700" lon="37.645100"><ele>154</ele><time>2024-06-01T10:06:45Z</time></trkpt>
+      <trkpt lat="55.763600" lon="37.646200"><ele>155</ele><time>2024-06-01T10:07:05Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>
