@@ -37,6 +37,8 @@
     connectBtn: document.getElementById("connect-btn"),
     resetPicks: document.getElementById("reset-picks"),
     manualRoutes: document.getElementById("manual-routes"),
+    bulkActions: document.getElementById("bulk-actions"),
+    allGapsRoadBtn: document.getElementById("all-gaps-road-btn"),
   };
 
   const map = L.map("map", { zoomControl: true }).setView([55.75, 37.62], 10);
@@ -340,6 +342,75 @@
     if (preferred) selectOption(connectId, preferred.id);
   }
 
+  function findDirectionsOption(anomalyId, profileHint) {
+    const options = state.analysis.options.filter(
+      (o) => o.anomaly_id === anomalyId && o.method === "directions_fill"
+    );
+    if (!options.length) return null;
+    if (profileHint && profileHint !== "mixed") {
+      return options.find((o) => o.profile === profileHint) || options[0];
+    }
+    return (
+      options.find((o) => o.profile === "driving") ||
+      options.find((o) => o.profile === "cycling") ||
+      options.find((o) => o.profile === "walking") ||
+      options[0]
+    );
+  }
+
+  function applyRoadRouteForAllGaps() {
+    if (!state.analysis) return;
+    const gaps = state.analysis.anomalies.filter((a) => a.type === "gap");
+    if (!gaps.length) {
+      setStatus("Разрывов (gap) не найдено.", true);
+      return;
+    }
+
+    const profile = els.profile.value;
+    let applied = 0;
+    let missing = 0;
+    let lastOptId = null;
+
+    for (const gap of gaps) {
+      const opt = findDirectionsOption(gap.id, profile);
+      if (!opt) {
+        missing++;
+        continue;
+      }
+      state.selections[gap.id] = opt.id;
+      lastOptId = opt.id;
+      const radio = document.querySelector(
+        `input[name="anomaly-${gap.id}"][value="${opt.id}"]`
+      );
+      if (radio) radio.checked = true;
+      applied++;
+    }
+
+    if (state.connectId) {
+      delete state.selections[state.connectId];
+      state.connectId = null;
+      els.manualRoutes.hidden = true;
+      els.manualRoutes.innerHTML = "";
+    }
+
+    if (lastOptId) previewSelection(lastOptId);
+    else previewSelection();
+
+    const profileLabel = profile === "mixed" ? "driving (mixed)" : profile;
+    if (!applied) {
+      setStatus(
+        "Для разрывов нет маршрутов Mapbox. Проверьте токен или выберите другой профиль.",
+        true
+      );
+      return;
+    }
+    setStatus(
+      `Для ${applied} разрыв(ов) выбран «Маршрут по карте» (${profileLabel})${
+        missing ? `. Без маршрута: ${missing}` : ""
+      }. Нажмите «Применить и скачать».`
+    );
+  }
+
   function renderSummary(analysis) {
     const s = analysis.summary || {};
     els.summary.hidden = false;
@@ -360,9 +431,14 @@
 
     if (!analysis.anomalies.length) {
       els.anomalyList.innerHTML = `<p class="lede">Аномалий не найдено. Можно соединить участок вручную ниже или скачать трек как есть.</p>`;
+      els.bulkActions.hidden = true;
       els.applyBtn.disabled = false;
       return;
     }
+
+    const gapCount = analysis.anomalies.filter((a) => a.type === "gap").length;
+    els.bulkActions.hidden = gapCount === 0;
+    els.allGapsRoadBtn.disabled = gapCount === 0;
 
     analysis.anomalies.forEach((anomaly, idx) => {
       const options = analysis.options.filter((o) => o.anomaly_id === anomaly.id);
@@ -420,6 +496,8 @@
     if (firstId) previewSelection(firstId);
     else previewSelection();
   }
+
+  els.allGapsRoadBtn.addEventListener("click", applyRoadRouteForAllGaps);
 
   map.on("click", (e) => {
     if (!state.analysis) return;

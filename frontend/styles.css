@@ -370,6 +370,20 @@ button:disabled {
   border-top: 1px solid var(--line);
 }
 
+.bulk-actions {
+  margin: 0.75rem 0 0.25rem;
+}
+
+.bulk-actions button {
+  width: 100%;
+}
+
+.bulk-actions button:not(:disabled) {
+  color: var(--ink);
+  border-color: rgba(240, 195, 90, 0.45);
+  background: rgba(240, 195, 90, 0.08);
+}
+
 .pick-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
