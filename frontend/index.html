@@ -28,8 +28,48 @@
             <p class="brand-tag">Ремонт битых GPS-треков по карте</p>
           </div>
         </div>
-        <div id="health" class="health" hidden></div>
+        <button type="button" id="mapbox-btn" class="mapbox-btn warn" aria-haspopup="dialog">
+          Mapbox · проверка…
+        </button>
       </header>
+
+      <dialog id="mapbox-dialog" class="mapbox-dialog">
+        <form id="mapbox-form" method="dialog" class="mapbox-dialog-inner">
+          <header>
+            <h2>Mapbox Access Token</h2>
+            <p class="lede small">
+              Вставьте свой публичный токен (<code>pk.…</code>). Он хранится только в вашем браузере
+              и отправляется с запросами к API для маршрутов и matching.
+            </p>
+          </header>
+          <label class="field">
+            <span>Access token</span>
+            <input
+              id="mapbox-token-input"
+              type="password"
+              autocomplete="off"
+              placeholder="pk.eyJ1Ijoi…"
+              spellcheck="false"
+            />
+          </label>
+          <label class="field checkbox">
+            <input id="mapbox-token-show" type="checkbox" />
+            <span>Показать токен</span>
+          </label>
+          <p id="mapbox-dialog-status" class="status" role="status"></p>
+          <div class="actions stack">
+            <button type="submit" id="mapbox-save-btn">Сохранить и проверить</button>
+            <button type="button" id="mapbox-clear-btn" class="ghost">Удалить токен</button>
+            <button type="button" id="mapbox-cancel-btn" class="ghost">Отмена</button>
+          </div>
+          <p class="lede small">
+            Получить токен:
+            <a href="https://account.mapbox.com/access-tokens/" target="_blank" rel="noopener noreferrer"
+              >account.mapbox.com</a
+            >
+          </p>
+        </form>
+      </dialog>
 
       <main class="layout">
         <section class="panel">

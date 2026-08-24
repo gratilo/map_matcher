@@ -120,3 +120,14 @@ class SupplementResponse(BaseModel):
     end_index: int
     options: list[RepairOption]
     message: str = ""
+
+
+class MapboxTokenRequest(BaseModel):
+    token: str
+
+
+class MapboxTokenResponse(BaseModel):
+    ok: bool
+    mapbox_configured: bool
+    source: str  # user | server | none
+    message: str = ""

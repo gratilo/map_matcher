@@ -3,24 +3,27 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.analysis.anomalies import detect_anomalies
-from app.config import get_settings
+from app.config import effective_settings, get_settings
 from app.export import export_track
 from app.geo import path_length_m
-from app.matching.mapbox import MapboxError
+from app.matching.mapbox import MapboxClient, MapboxError
 from app.models import (
     AnalysisResult,
     ApplyRepairsRequest,
     ApplyRepairsResponse,
     ConnectRequest,
     ConnectResponse,
+    MapboxTokenRequest,
+    MapboxTokenResponse,
     SupplementRequest,
     SupplementResponse,
+    TrackPoint,
 )
 from app.parsers.track_parser import parse_track
 from app.repair.engine import (
@@ -46,21 +49,61 @@ app.add_middleware(
 store = SessionStore()
 
 
+def _mapbox_source(user_token: str | None) -> str:
+    if user_token and user_token.strip() and effective_settings(user_token).mapbox_ready():
+        return "user"
+    if get_settings().mapbox_ready():
+        return "server"
+    return "none"
+
+
 @app.get("/api/health")
-async def health() -> dict:
-    settings = get_settings()
+async def health(
+    x_mapbox_token: str | None = Header(None, alias="X-Mapbox-Token"),
+) -> dict:
+    settings = effective_settings(x_mapbox_token)
     return {
         "ok": True,
         "mapbox_configured": settings.mapbox_ready(),
+        "mapbox_source": _mapbox_source(x_mapbox_token),
     }
+
+
+@app.post("/api/mapbox/token", response_model=MapboxTokenResponse)
+async def validate_mapbox_token(body: MapboxTokenRequest) -> MapboxTokenResponse:
+    """Validate a user-supplied Mapbox token (not stored on server)."""
+    settings = effective_settings(body.token)
+    if not settings.mapbox_ready():
+        raise HTTPException(
+            status_code=400,
+            detail="Некорректный токен. Вставьте публичный токен Mapbox (pk.…).",
+        )
+
+    try:
+        async with MapboxClient(settings) as client:
+            await client.directions(
+                TrackPoint(lat=55.751, lon=37.618),
+                TrackPoint(lat=55.752, lon=37.620),
+                profile="driving",
+            )
+    except MapboxError as exc:
+        raise HTTPException(status_code=401, detail=f"Mapbox отклонил токен: {exc}") from exc
+
+    return MapboxTokenResponse(
+        ok=True,
+        mapbox_configured=True,
+        source="user",
+        message="Токен принят. Он сохранится только в вашем браузере.",
+    )
 
 
 @app.post("/api/analyze", response_model=AnalysisResult)
 async def analyze(
     file: UploadFile = File(...),
     profile: str = Form("mixed"),
+    x_mapbox_token: str | None = Header(None, alias="X-Mapbox-Token"),
 ) -> AnalysisResult:
-    settings = get_settings()
+    settings = effective_settings(x_mapbox_token)
     raw = await file.read()
     max_bytes = settings.max_upload_mb * 1024 * 1024
     if len(raw) > max_bytes:
@@ -90,6 +133,7 @@ async def analyze(
             "anomaly_count": len(anomalies),
             "option_count": len(options),
             "mapbox_configured": settings.mapbox_ready(),
+            "mapbox_source": _mapbox_source(x_mapbox_token),
             "profile": profile,
         },
     )
@@ -98,9 +142,12 @@ async def analyze(
 
 
 @app.post("/api/connect", response_model=ConnectResponse)
-async def connect(body: ConnectRequest) -> ConnectResponse:
+async def connect(
+    body: ConnectRequest,
+    x_mapbox_token: str | None = Header(None, alias="X-Mapbox-Token"),
+) -> ConnectResponse:
     """Optional variant: build road routes between user-picked points A and B."""
-    settings = get_settings()
+    settings = effective_settings(x_mapbox_token)
     rec = store.get(body.track_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="Track session not found or expired")
@@ -137,9 +184,12 @@ async def connect(body: ConnectRequest) -> ConnectResponse:
 
 
 @app.post("/api/supplement", response_model=SupplementResponse)
-async def supplement(body: SupplementRequest) -> SupplementResponse:
+async def supplement(
+    body: SupplementRequest,
+    x_mapbox_token: str | None = Header(None, alias="X-Mapbox-Token"),
+) -> SupplementResponse:
     """Insert missing track section between two existing anchor points A and B."""
-    settings = get_settings()
+    settings = effective_settings(x_mapbox_token)
     rec = store.get(body.track_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="Track session not found or expired")

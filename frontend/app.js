@@ -1,4 +1,6 @@
 (() => {
+  const MAPBOX_TOKEN_KEY = "trackfix_mapbox_token";
+
   const state = {
     analysis: null,
     selections: {},
@@ -29,7 +31,16 @@
     anomalyList: document.getElementById("anomaly-list"),
     applyBtn: document.getElementById("apply-btn"),
     exportFormat: document.getElementById("export-format"),
-    health: document.getElementById("health"),
+    health: document.getElementById("mapbox-btn"),
+    mapboxBtn: document.getElementById("mapbox-btn"),
+    mapboxDialog: document.getElementById("mapbox-dialog"),
+    mapboxForm: document.getElementById("mapbox-form"),
+    mapboxTokenInput: document.getElementById("mapbox-token-input"),
+    mapboxTokenShow: document.getElementById("mapbox-token-show"),
+    mapboxDialogStatus: document.getElementById("mapbox-dialog-status"),
+    mapboxSaveBtn: document.getElementById("mapbox-save-btn"),
+    mapboxClearBtn: document.getElementById("mapbox-clear-btn"),
+    mapboxCancelBtn: document.getElementById("mapbox-cancel-btn"),
     analyzeBtn: document.getElementById("analyze-btn"),
     pickA: document.getElementById("pick-a"),
     pickB: document.getElementById("pick-b"),
@@ -73,24 +84,118 @@
     els.resetPicks.disabled = state.pointA == null && state.pointB == null;
   }
 
-  async function checkHealth() {
+  function getMapboxToken() {
     try {
-      const res = await fetch("/api/health");
-      const data = await res.json();
-      els.health.hidden = false;
-      if (data.mapbox_configured) {
-        els.health.textContent = "Mapbox: подключён";
-        els.health.className = "health ok";
-      } else {
-        els.health.textContent = "Mapbox: нет токена (локальные фиксы)";
-        els.health.className = "health warn";
-      }
+      return localStorage.getItem(MAPBOX_TOKEN_KEY) || "";
     } catch {
-      els.health.hidden = false;
-      els.health.textContent = "API недоступен";
-      els.health.className = "health warn";
+      return "";
     }
   }
+
+  function setMapboxToken(token) {
+    localStorage.setItem(MAPBOX_TOKEN_KEY, token);
+  }
+
+  function clearMapboxToken() {
+    localStorage.removeItem(MAPBOX_TOKEN_KEY);
+  }
+
+  function apiHeaders(extra = {}) {
+    const headers = { ...extra };
+    const token = getMapboxToken().trim();
+    if (token) headers["X-Mapbox-Token"] = token;
+    return headers;
+  }
+
+  function setMapboxBtn(label, kind) {
+    els.mapboxBtn.textContent = label;
+    els.mapboxBtn.classList.remove("ok", "warn");
+    if (kind) els.mapboxBtn.classList.add(kind);
+  }
+
+  function setMapboxDialogStatus(text, isError = false) {
+    els.mapboxDialogStatus.textContent = text || "";
+    els.mapboxDialogStatus.classList.toggle("error", Boolean(isError));
+  }
+
+  async function checkHealth() {
+    try {
+      const res = await fetch("/api/health", { headers: apiHeaders() });
+      const data = await res.json();
+      if (data.mapbox_configured) {
+        const src =
+          data.mapbox_source === "user"
+            ? "ваш токен"
+            : data.mapbox_source === "server"
+              ? "сервер"
+              : "подключён";
+        setMapboxBtn(`Mapbox · ${src}`, "ok");
+      } else if (getMapboxToken().trim()) {
+        setMapboxBtn("Mapbox · ошибка токена", "warn");
+      } else {
+        setMapboxBtn("Mapbox · добавить токен", "warn");
+      }
+    } catch {
+      setMapboxBtn("Mapbox · API недоступен", "warn");
+    }
+  }
+
+  function openMapboxDialog() {
+    els.mapboxTokenInput.value = getMapboxToken();
+    els.mapboxTokenShow.checked = false;
+    els.mapboxTokenInput.type = "password";
+    setMapboxDialogStatus("");
+    els.mapboxDialog.showModal();
+    els.mapboxTokenInput.focus();
+  }
+
+  els.mapboxBtn.addEventListener("click", openMapboxDialog);
+
+  els.mapboxTokenShow.addEventListener("change", () => {
+    els.mapboxTokenInput.type = els.mapboxTokenShow.checked ? "text" : "password";
+  });
+
+  els.mapboxCancelBtn.addEventListener("click", () => {
+    els.mapboxDialog.close();
+  });
+
+  els.mapboxClearBtn.addEventListener("click", () => {
+    clearMapboxToken();
+    els.mapboxTokenInput.value = "";
+    setMapboxDialogStatus("Токен удалён из браузера.");
+    checkHealth();
+  });
+
+  els.mapboxForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const token = els.mapboxTokenInput.value.trim();
+    if (!token) {
+      setMapboxDialogStatus("Вставьте токен Mapbox (pk.…).", true);
+      return;
+    }
+
+    els.mapboxSaveBtn.disabled = true;
+    setMapboxDialogStatus("Проверяем токен…");
+    try {
+      const res = await fetch("/api/mapbox/token", {
+        method: "POST",
+        headers: apiHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+      }
+      setMapboxToken(token);
+      setMapboxDialogStatus(data.message || "Токен сохранён.");
+      await checkHealth();
+      setTimeout(() => els.mapboxDialog.close(), 600);
+    } catch (err) {
+      setMapboxDialogStatus(err.message || String(err), true);
+    } finally {
+      els.mapboxSaveBtn.disabled = false;
+    }
+  });
 
   function clearSupplementOverlays() {
     if (state.layers.markerA) {
@@ -598,7 +703,7 @@
     try {
       const res = await fetch("/api/supplement", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: apiHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           track_id: state.analysis.track_id,
           start_index: state.pointA,
@@ -666,7 +771,7 @@
     setStatus("Анализ трека…");
 
     try {
-      const res = await fetch("/api/analyze", { method: "POST", body });
+      const res = await fetch("/api/analyze", { method: "POST", headers: apiHeaders(), body });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Ошибка анализа");
       state.analysis = data;
@@ -681,7 +786,7 @@
       setStatus(
         data.summary?.mapbox_configured
           ? "Готово. Выберите авто-варианты или дополнительно соедините разрыв вручную (A→B)."
-          : "Готово без Mapbox: доступны локальные варианты. Добавьте MAPBOX_ACCESS_TOKEN."
+          : "Готово без Mapbox: нажмите «Mapbox» вверху справа и добавьте свой токен."
       );
     } catch (err) {
       setStatus(err.message || String(err), true);
@@ -715,7 +820,7 @@
     try {
       const res = await fetch("/api/apply", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: apiHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           track_id: state.analysis.track_id,
           selections,

@@ -83,6 +83,78 @@ body {
   font-size: 0.92rem;
 }
 
+.mapbox-btn {
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  background: rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.mapbox-btn:hover {
+  border-color: rgba(243, 240, 231, 0.28);
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.mapbox-btn.ok {
+  color: var(--raw);
+}
+
+.mapbox-btn.warn {
+  color: var(--fix);
+}
+
+.mapbox-dialog {
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  max-width: min(28rem, calc(100vw - 2rem));
+  background: transparent;
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.mapbox-dialog::backdrop {
+  background: rgba(8, 14, 12, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.mapbox-dialog-inner {
+  margin: 0;
+  padding: 1.25rem 1.35rem 1.35rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.mapbox-dialog-inner header h2 {
+  margin: 0 0 0.35rem;
+  font-family: var(--display);
+  font-size: 1.35rem;
+}
+
+.mapbox-dialog-inner .field.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mapbox-dialog-inner .field.checkbox input {
+  width: auto;
+}
+
+.mapbox-dialog-inner code {
+  font-size: 0.88em;
+}
+
+.mapbox-dialog-inner a {
+  color: var(--raw);
+}
+
 .health {
   font-size: 0.82rem;
   color: var(--muted);

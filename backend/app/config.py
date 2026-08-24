@@ -36,3 +36,12 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def effective_settings(mapbox_token: str | None = None) -> Settings:
+    """Server .env token, overridden by per-request user token when provided."""
+    base = get_settings()
+    token = (mapbox_token or "").strip()
+    if not token:
+        return base
+    return base.model_copy(update={"mapbox_access_token": token})
