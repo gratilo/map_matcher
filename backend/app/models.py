@@ -104,3 +104,19 @@ class ConnectResponse(BaseModel):
     end_index: int
     options: list[RepairOption]
     message: str = ""
+
+
+class SupplementRequest(BaseModel):
+    track_id: str
+    start_index: int
+    end_index: int
+    profile: str = "mixed"
+
+
+class SupplementResponse(BaseModel):
+    track_id: str
+    supplement_id: str
+    start_index: int
+    end_index: int
+    options: list[RepairOption]
+    message: str = ""

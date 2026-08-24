@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.config import Settings
@@ -187,6 +188,78 @@ async def build_manual_connect_options(
     return options
 
 
+async def build_supplement_options(
+    track: Track,
+    start_index: int,
+    end_index: int,
+    settings: Settings,
+    profile_hint: str = "mixed",
+) -> list[RepairOption]:
+    """Fill missing section between two existing track anchors A and B (anchors kept)."""
+    n = len(track.points)
+    if start_index < 0 or end_index < 0 or start_index >= n or end_index >= n:
+        raise ValueError("Point indices out of range")
+    if start_index == end_index:
+        raise ValueError("Pick two different track points")
+    lo, hi = sorted((start_index, end_index))
+
+    supplement_id = f"supplement-{uuid.uuid4().hex[:8]}"
+    start = track.points[lo]
+    end = track.points[hi]
+    profiles = list(settings.default_profiles) if profile_hint == "mixed" else [profile_hint]
+
+    options: list[RepairOption] = [
+        RepairOption(
+            id=f"opt-{uuid.uuid4().hex[:8]}",
+            anomaly_id=supplement_id,
+            label="Прямая линия (без карты)",
+            description="Вставить прямую между якорями A и B — для сравнения",
+            method="supplement_interpolate",
+            confidence=0.25,
+            geometry=[start, *interpolate_points(start, end, count=max(3, min(20, hi - lo))), end],
+            replaces_from=lo,
+            replaces_to=hi,
+        )
+    ]
+
+    if not settings.mapbox_ready():
+        return options
+
+    async with MapboxClient(settings) as client:
+        for profile in profiles:
+            try:
+                result = await client.directions(start, end, profile=profile)
+            except MapboxError:
+                continue
+            geom = result["geometry"]
+            if len(geom) < 2:
+                continue
+            dist = result.get("distance")
+            dur = result.get("duration")
+            meta = []
+            if dist is not None:
+                meta.append(f"{dist / 1000:.2f} км")
+            if dur is not None:
+                meta.append(f"{dur / 60:.0f} мин")
+            suffix = f" · {' · '.join(meta)}" if meta else ""
+            options.append(
+                RepairOption(
+                    id=f"opt-{uuid.uuid4().hex[:8]}",
+                    anomaly_id=supplement_id,
+                    label=f"Дополнить по дорогам ({profile}){suffix}",
+                    description="Маршрут Mapbox между якорями A и B; точки A/B трека сохраняются",
+                    profile=profile,
+                    method="supplement_fill",
+                    confidence=0.9,
+                    geometry=geom,
+                    replaces_from=lo,
+                    replaces_to=hi,
+                )
+            )
+
+    return options
+
+
 def _local_options(track: Track, anomaly: Anomaly) -> list[RepairOption]:
     start = track.points[anomaly.start_index]
     end = track.points[anomaly.end_index]
@@ -253,7 +326,15 @@ def _dedupe(options: list[RepairOption]) -> list[RepairOption]:
             best[key] = opt
     # Stable-ish order: keep, then map methods by confidence
     ordered = list(best.values())
-    method_rank = {"keep": 0, "map_match": 1, "directions_fill": 2, "interpolate": 3, "discard": 4}
+    method_rank = {
+        "keep": 0,
+        "map_match": 1,
+        "directions_fill": 2,
+        "supplement_fill": 2,
+        "interpolate": 3,
+        "supplement_interpolate": 3,
+        "discard": 4,
+    }
     ordered.sort(key=lambda o: (o.anomaly_id, method_rank.get(o.method, 9), -(o.confidence or 0)))
     return ordered
 
@@ -282,6 +363,9 @@ def apply_repairs(
         hi = max(0, min(opt.replaces_to, len(points) - 1))
         if hi < lo:
             lo, hi = hi, lo
+        if opt.method in ("supplement_fill", "supplement_interpolate"):
+            points = _apply_supplement(points, lo, hi, list(opt.geometry))
+            continue
         left = points[:lo]
         right = points[hi + 1 :]
         mid = _prepare_insert_geometry(points, lo, hi, list(opt.geometry))
@@ -293,6 +377,58 @@ def apply_repairs(
         source_format=track.source_format,
         metadata={**track.metadata, "repaired": True},
     )
+
+
+def _apply_supplement(
+    points: list[TrackPoint],
+    lo: int,
+    hi: int,
+    geometry: list[TrackPoint],
+) -> list[TrackPoint]:
+    """Keep anchor points at lo and hi; insert route between them."""
+    if hi <= lo:
+        return points
+    start = points[lo]
+    end = points[hi]
+    mid = [TrackPoint(**p.model_dump()) for p in geometry]
+    if mid and _same_point(mid[0], start):
+        mid = mid[1:]
+    if mid and _same_point(mid[-1], end):
+        mid = mid[:-1]
+    mid = _interpolate_times_between(start, end, mid)
+    return points[: lo + 1] + mid + points[hi:]
+
+
+def _interpolate_times_between(
+    start: TrackPoint,
+    end: TrackPoint,
+    mid: list[TrackPoint],
+) -> list[TrackPoint]:
+    if not mid or start.time is None or end.time is None:
+        return mid
+    t0 = start.time.timestamp()
+    t1 = end.time.timestamp()
+    if t1 <= t0:
+        return mid
+    out: list[TrackPoint] = []
+    n = len(mid)
+    for i, p in enumerate(mid):
+        if p.time is not None:
+            out.append(p)
+            continue
+        frac = (i + 1) / (n + 1)
+        ts = t0 + (t1 - t0) * frac
+        tz = start.time.tzinfo or timezone.utc
+        out.append(
+            TrackPoint(
+                lat=p.lat,
+                lon=p.lon,
+                ele=p.ele,
+                time=datetime.fromtimestamp(ts, tz=tz),
+                hdop=p.hdop,
+            )
+        )
+    return out
 
 
 def _prepare_insert_geometry(

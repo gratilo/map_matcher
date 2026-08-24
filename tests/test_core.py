@@ -106,6 +106,30 @@ def test_apply_preserves_track_after_partial_repair():
     assert abs(repaired.points[-1].lat - track.points[-1].lat) < 1e-9
 
 
+def test_supplement_keeps_anchor_points():
+    track = Track(points=_pts(), source_format="gpx")
+    lo, hi = 1, 2
+    opt = RepairOption(
+        id="sup1",
+        anomaly_id="sup-a",
+        label="sup",
+        description="",
+        method="supplement_fill",
+        geometry=[
+            track.points[1],
+            TrackPoint(lat=55.756, lon=37.630, time=track.points[1].time),
+            track.points[2],
+        ],
+        replaces_from=lo,
+        replaces_to=hi,
+    )
+    repaired = apply_repairs(track, {"sup1": opt}, {"sup-a": "sup1"})
+    assert len(repaired.points) > len(track.points)
+    assert abs(repaired.points[lo].lat - track.points[lo].lat) < 1e-9
+    # anchor B stays at index lo + 1 + mid_len
+    assert any(abs(p.lat - track.points[hi].lat) < 1e-9 for p in repaired.points[hi:])
+
+
 def test_session_track_stays_consistent_after_repair():
     from app.models import AnalysisResult
     from app.store import SessionStore

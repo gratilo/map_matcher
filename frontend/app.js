@@ -5,7 +5,7 @@
     pickStep: "a",
     pointA: null,
     pointB: null,
-    connectId: null,
+    supplementId: null,
     focusedOptionId: null,
     layers: {
       raw: null,
@@ -13,7 +13,8 @@
       previews: [],
       markerA: null,
       markerB: null,
-      manualRoutes: [],
+      supplementRoutes: [],
+      supplementSegment: null,
     },
   };
 
@@ -34,9 +35,9 @@
     pickB: document.getElementById("pick-b"),
     pickAVal: document.getElementById("pick-a-val"),
     pickBVal: document.getElementById("pick-b-val"),
-    connectBtn: document.getElementById("connect-btn"),
+    supplementBtn: document.getElementById("supplement-btn"),
     resetPicks: document.getElementById("reset-picks"),
-    manualRoutes: document.getElementById("manual-routes"),
+    supplementRoutes: document.getElementById("supplement-routes"),
     bulkActions: document.getElementById("bulk-actions"),
     allGapsRoadBtn: document.getElementById("all-gaps-road-btn"),
   };
@@ -68,7 +69,7 @@
     els.pickA.classList.toggle("active", state.pickStep === "a");
     els.pickB.classList.toggle("active", state.pickStep === "b");
     const ready = state.pointA != null && state.pointB != null && state.pointA !== state.pointB;
-    els.connectBtn.disabled = !ready || !state.analysis;
+    els.supplementBtn.disabled = !ready || !state.analysis;
     els.resetPicks.disabled = state.pointA == null && state.pointB == null;
   }
 
@@ -91,7 +92,7 @@
     }
   }
 
-  function clearManualOverlays() {
+  function clearSupplementOverlays() {
     if (state.layers.markerA) {
       map.removeLayer(state.layers.markerA);
       state.layers.markerA = null;
@@ -100,8 +101,12 @@
       map.removeLayer(state.layers.markerB);
       state.layers.markerB = null;
     }
-    state.layers.manualRoutes.forEach((layer) => map.removeLayer(layer));
-    state.layers.manualRoutes = [];
+    state.layers.supplementRoutes.forEach((layer) => map.removeLayer(layer));
+    state.layers.supplementRoutes = [];
+    if (state.layers.supplementSegment) {
+      map.removeLayer(state.layers.supplementSegment);
+      state.layers.supplementSegment = null;
+    }
   }
 
   function clearLayers() {
@@ -112,7 +117,7 @@
     state.layers.anomalies.forEach((layer) => map.removeLayer(layer));
     state.layers.anomalies = [];
     clearPreviews();
-    clearManualOverlays();
+    clearSupplementOverlays();
   }
 
   function clearPreviews() {
@@ -184,6 +189,28 @@
 
     map.fitBounds(state.layers.raw.getBounds(), { padding: [28, 28] });
     drawPickMarkers();
+    drawSupplementSegment();
+  }
+
+  function drawSupplementSegment() {
+    if (state.layers.supplementSegment) {
+      map.removeLayer(state.layers.supplementSegment);
+      state.layers.supplementSegment = null;
+    }
+    if (state.pointA == null || state.pointB == null || !state.analysis) return;
+    const pts = state.analysis.track.points;
+    const lo = Math.min(state.pointA, state.pointB);
+    const hi = Math.max(state.pointA, state.pointB);
+    const slice = pts.slice(lo, hi + 1);
+    if (slice.length < 2) return;
+    state.layers.supplementSegment = L.polyline(toLatLngs(slice), {
+      color: "#56e6a8",
+      weight: 5,
+      opacity: 0.85,
+      dashArray: "6 8",
+    })
+      .bindPopup("Участок между якорями A и B (будет дополнен маршрутом)")
+      .addTo(map);
   }
 
   function previewSelection(focusOptionId = null) {
@@ -200,9 +227,11 @@
       const color =
         opt.method === "map_match"
           ? "#ff4fd8"
-          : opt.method === "directions_fill"
+          : opt.method === "directions_fill" || opt.method === "supplement_fill"
             ? "#f0c35a"
-            : "#9ad0ff";
+            : opt.method === "supplement_interpolate"
+              ? "#56e6a8"
+              : "#9ad0ff";
       const layer = L.polyline(toLatLngs(opt.geometry), {
         color,
         weight: isFocus ? 7 : 4,
@@ -264,20 +293,42 @@
       state.pointB = idx;
       state.pickStep = "a";
     }
+    if (state.supplementId) delete state.selections[state.supplementId];
+    state.supplementId = null;
+    els.supplementRoutes.hidden = true;
+    els.supplementRoutes.innerHTML = "";
+    state.layers.supplementRoutes.forEach((layer) => map.removeLayer(layer));
+    state.layers.supplementRoutes = [];
     drawPickMarkers();
+    drawSupplementSegment();
     updatePickUI();
   }
 
-  function useGapAsAB(anomaly) {
-    state.pointA = anomaly.start_index;
-    state.pointB = anomaly.end_index;
+  function useSupplementAnchors(aIdx, bIdx) {
+    state.pointA = aIdx;
+    state.pointB = bIdx;
     state.pickStep = "a";
     drawPickMarkers();
+    drawSupplementSegment();
     updatePickUI();
-    setStatus("Разрыв подставлен в A/B. Можно построить соединение по дорогам.");
+    setStatus(`Якоря A (#${aIdx}) и B (#${bIdx}) — точки существующего трека. Постройте дополнение.`);
   }
 
-  /** If manual connect overlaps an auto gap fix, switch that gap to "keep". */
+  function useSupplementAfterDiscard(anomaly) {
+    const n = state.analysis.track.points.length;
+    const a = Math.max(0, anomaly.start_index - 1);
+    const b = Math.min(n - 1, anomaly.end_index + 1);
+    if (a >= b) {
+      setStatus("Не удалось определить якоря до/после выброса.", true);
+      return;
+    }
+    useSupplementAnchors(a, b);
+    setStatus(
+      `После «Удалить выброс»: якоря A (#${a}) и B (#${b}). Сначала примените удаление, затем дополнение — или дополните сразу.`
+    );
+  }
+
+  /** If supplement overlaps an auto fix, switch that anomaly to "keep". */
   function suppressOverlappingAutoFixes(fromIdx, toIdx) {
     (state.analysis.anomalies || []).forEach((anomaly) => {
       const overlaps = anomaly.start_index <= toIdx && anomaly.end_index >= fromIdx;
@@ -297,34 +348,34 @@
     });
   }
 
-  function renderManualRoutes(connectId, options) {
-    els.manualRoutes.hidden = false;
-    els.manualRoutes.innerHTML = "<h3>Варианты ручного соединения</h3>";
-    state.layers.manualRoutes.forEach((layer) => map.removeLayer(layer));
-    state.layers.manualRoutes = [];
+  function renderSupplementRoutes(supplementId, options) {
+    els.supplementRoutes.hidden = false;
+    els.supplementRoutes.innerHTML = "<h3>Варианты дополнения</h3>";
+    state.layers.supplementRoutes.forEach((layer) => map.removeLayer(layer));
+    state.layers.supplementRoutes = [];
 
     const preferred =
-      options.find((o) => o.method === "directions_fill") || options[0];
+      options.find((o) => o.method === "supplement_fill") || options[0];
     if (preferred) {
-      state.selections[connectId] = preferred.id;
+      state.selections[supplementId] = preferred.id;
       suppressOverlappingAutoFixes(preferred.replaces_from, preferred.replaces_to);
     }
 
     options.forEach((opt, idx) => {
-      if (opt.geometry?.length >= 2 && opt.method === "directions_fill") {
+      if (opt.geometry?.length >= 2 && opt.method === "supplement_fill") {
         const layer = L.polyline(toLatLngs(opt.geometry), {
-          color: idx === 0 ? "#f0c35a" : "#7aa2ff",
+          color: idx === 0 ? "#56e6a8" : "#7aa2ff",
           weight: 4,
           opacity: 0.85,
         }).addTo(map);
-        state.layers.manualRoutes.push(layer);
+        state.layers.supplementRoutes.push(layer);
       }
 
       const row = document.createElement("label");
       row.className = "option";
       row.innerHTML = `
-        <input type="radio" name="manual-connect" value="${opt.id}" ${
-          state.selections[connectId] === opt.id ? "checked" : ""
+        <input type="radio" name="supplement-opt" value="${opt.id}" ${
+          state.selections[supplementId] === opt.id ? "checked" : ""
         } />
         <div>
           <strong>${opt.label}</strong>
@@ -332,14 +383,14 @@
         </div>
       `;
       row.querySelector("input").addEventListener("change", () => {
-        state.selections[connectId] = opt.id;
+        state.selections[supplementId] = opt.id;
         suppressOverlappingAutoFixes(opt.replaces_from, opt.replaces_to);
-        selectOption(connectId, opt.id);
+        selectOption(supplementId, opt.id);
       });
-      els.manualRoutes.appendChild(row);
+      els.supplementRoutes.appendChild(row);
     });
 
-    if (preferred) selectOption(connectId, preferred.id);
+    if (preferred) selectOption(supplementId, preferred.id);
   }
 
   function findDirectionsOption(anomalyId, profileHint) {
@@ -386,11 +437,11 @@
       applied++;
     }
 
-    if (state.connectId) {
-      delete state.selections[state.connectId];
-      state.connectId = null;
-      els.manualRoutes.hidden = true;
-      els.manualRoutes.innerHTML = "";
+    if (state.supplementId) {
+      delete state.selections[state.supplementId];
+      state.supplementId = null;
+      els.supplementRoutes.hidden = true;
+      els.supplementRoutes.innerHTML = "";
     }
 
     if (lastOptId) previewSelection(lastOptId);
@@ -425,9 +476,9 @@
     els.anomalies.hidden = false;
     els.anomalyList.innerHTML = "";
     state.selections = {};
-    state.connectId = null;
-    els.manualRoutes.hidden = true;
-    els.manualRoutes.innerHTML = "";
+    state.supplementId = null;
+    els.supplementRoutes.hidden = true;
+    els.supplementRoutes.innerHTML = "";
 
     if (!analysis.anomalies.length) {
       els.anomalyList.innerHTML = `<p class="lede">Аномалий не найдено. Можно соединить участок вручную ниже или скачать трек как есть.</p>`;
@@ -483,9 +534,20 @@
         const useBtn = document.createElement("button");
         useBtn.type = "button";
         useBtn.className = "ghost use-gap-btn";
-        useBtn.textContent = "Вариант: соединить этот разрыв вручную (A→B)";
-        useBtn.addEventListener("click", () => useGapAsAB(anomaly));
+        useBtn.textContent = "Якоря A/B этого разрыва";
+        useBtn.addEventListener("click", () =>
+          useSupplementAnchors(anomaly.start_index, anomaly.end_index)
+        );
         card.appendChild(useBtn);
+      }
+
+      if (anomaly.type === "spike" || anomaly.type === "noise" || anomaly.type === "jump") {
+        const supBtn = document.createElement("button");
+        supBtn.type = "button";
+        supBtn.className = "ghost use-gap-btn";
+        supBtn.textContent = "Дополнить после удаления выброса";
+        supBtn.addEventListener("click", () => useSupplementAfterDiscard(anomaly));
+        card.appendChild(supBtn);
       }
 
       els.anomalyList.appendChild(card);
@@ -514,26 +576,27 @@
   });
 
   els.resetPicks.addEventListener("click", () => {
-    if (state.connectId) delete state.selections[state.connectId];
+    if (state.supplementId) delete state.selections[state.supplementId];
     state.pointA = null;
     state.pointB = null;
     state.pickStep = "a";
-    state.connectId = null;
-    els.manualRoutes.hidden = true;
-    els.manualRoutes.innerHTML = "";
-    state.layers.manualRoutes.forEach((layer) => map.removeLayer(layer));
-    state.layers.manualRoutes = [];
+    state.supplementId = null;
+    els.supplementRoutes.hidden = true;
+    els.supplementRoutes.innerHTML = "";
+    state.layers.supplementRoutes.forEach((layer) => map.removeLayer(layer));
+    state.layers.supplementRoutes = [];
     drawPickMarkers();
+    drawSupplementSegment();
     updatePickUI();
     previewSelection();
   });
 
-  els.connectBtn.addEventListener("click", async () => {
+  els.supplementBtn.addEventListener("click", async () => {
     if (!state.analysis || state.pointA == null || state.pointB == null) return;
-    els.connectBtn.disabled = true;
-    setStatus("Строим вариант соединения A→B…");
+    els.supplementBtn.disabled = true;
+    setStatus("Строим дополнение трека между якорями A и B…");
     try {
-      const res = await fetch("/api/connect", {
+      const res = await fetch("/api/supplement", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -547,15 +610,14 @@
       if (!res.ok) {
         throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
       }
-      if (state.connectId) delete state.selections[state.connectId];
-      state.connectId = data.connect_id;
-      // merge options into analysis for apply/preview lookup
+      if (state.supplementId) delete state.selections[state.supplementId];
+      state.supplementId = data.supplement_id;
       const known = new Set(state.analysis.options.map((o) => o.id));
       data.options.forEach((o) => {
         if (!known.has(o.id)) state.analysis.options.push(o);
       });
-      renderManualRoutes(data.connect_id, data.options);
-      setStatus(data.message || "Вариант соединения добавлен. Выберите маршрут и нажмите «Применить».");
+      renderSupplementRoutes(data.supplement_id, data.options);
+      setStatus(data.message || "Выберите вариант дополнения и нажмите «Применить».");
     } catch (err) {
       setStatus(err.message || String(err), true);
     } finally {
@@ -611,7 +673,7 @@
       state.pointA = null;
       state.pointB = null;
       state.pickStep = "a";
-      state.connectId = null;
+      state.supplementId = null;
       drawTrack(data);
       renderSummary(data);
       renderAnomalies(data);
@@ -629,9 +691,9 @@
   });
 
   function buildApplySelections() {
-    // Manual A→B: apply only that variant (not every auto-selected anomaly).
-    if (state.connectId && state.selections[state.connectId]) {
-      return { [state.connectId]: state.selections[state.connectId] };
+    // Supplement A→B: apply only that variant (anchors kept on track).
+    if (state.supplementId && state.selections[state.supplementId]) {
+      return { [state.supplementId]: state.selections[state.supplementId] };
     }
     const out = {};
     for (const [anomalyId, optionId] of Object.entries(state.selections)) {
@@ -668,10 +730,10 @@
         state.analysis.summary.point_count = data.point_count;
         state.pointA = null;
         state.pointB = null;
-        state.connectId = null;
+        state.supplementId = null;
         state.selections = {};
-        els.manualRoutes.hidden = true;
-        els.manualRoutes.innerHTML = "";
+        els.supplementRoutes.hidden = true;
+        els.supplementRoutes.innerHTML = "";
         drawTrack(state.analysis);
         renderSummary(state.analysis);
         updatePickUI();

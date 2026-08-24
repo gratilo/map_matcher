@@ -70,26 +70,27 @@
             </div>
             <div id="anomaly-list"></div>
 
-            <section id="manual-connect" class="manual-connect">
-              <h2>Вариант: соединить разрыв вручную</h2>
+            <section id="supplement-panel" class="supplement-panel">
+              <h2>Дополнить трек</h2>
               <p class="lede small">
-                Опционально: кликните на карте точку A и точку B (или подставьте разрыв), затем постройте маршруты по дорогам.
+                Якоря A и B — только точки существующего трека (клик по линии на карте).
+                Между ними будет вставлен маршрут. Удобно после «Удалить выброс».
               </p>
               <div class="pick-row">
                 <div class="pick-card" id="pick-a">
-                  <span class="pick-label">A · начало</span>
+                  <span class="pick-label">A · якорь начала</span>
                   <strong id="pick-a-val">не выбрана</strong>
                 </div>
                 <div class="pick-card" id="pick-b">
-                  <span class="pick-label">B · конец</span>
+                  <span class="pick-label">B · якорь конца</span>
                   <strong id="pick-b-val">не выбрана</strong>
                 </div>
               </div>
               <div class="actions stack">
-                <button type="button" id="connect-btn" disabled>Построить соединение A→B</button>
+                <button type="button" id="supplement-btn" disabled>Построить дополнение A→B</button>
                 <button type="button" id="reset-picks" class="ghost" disabled>Сбросить A/B</button>
               </div>
-              <div id="manual-routes" class="manual-routes" hidden></div>
+              <div id="supplement-routes" class="supplement-routes" hidden></div>
             </section>
 
             <div class="actions">
@@ -112,6 +113,7 @@
             <span><i class="swatch anomaly"></i> Аномалия</span>
             <span><i class="swatch fix"></i> Directions</span>
             <span><i class="swatch snap"></i> Snap</span>
+            <span><i class="swatch supplement"></i> Дополнение</span>
           </div>
         </section>
       </main>

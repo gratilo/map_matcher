@@ -19,9 +19,16 @@ from app.models import (
     ApplyRepairsResponse,
     ConnectRequest,
     ConnectResponse,
+    SupplementRequest,
+    SupplementResponse,
 )
 from app.parsers.track_parser import parse_track
-from app.repair.engine import apply_repairs, build_manual_connect_options, build_repair_options
+from app.repair.engine import (
+    apply_repairs,
+    build_manual_connect_options,
+    build_repair_options,
+    build_supplement_options,
+)
 from app.store import SessionStore, new_track_id
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -126,6 +133,45 @@ async def connect(body: ConnectRequest) -> ConnectResponse:
         end_index=hi,
         options=options,
         message=f"Добавлен вариант соединения A→B: {road_n} маршрут(ов) по карте.",
+    )
+
+
+@app.post("/api/supplement", response_model=SupplementResponse)
+async def supplement(body: SupplementRequest) -> SupplementResponse:
+    """Insert missing track section between two existing anchor points A and B."""
+    settings = get_settings()
+    rec = store.get(body.track_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Track session not found or expired")
+
+    track = store.current_track(body.track_id)
+    try:
+        options = await build_supplement_options(
+            track,
+            body.start_index,
+            body.end_index,
+            settings,
+            profile_hint=body.profile,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except MapboxError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if settings.mapbox_ready() and not any(o.method == "supplement_fill" for o in options):
+        raise HTTPException(status_code=502, detail="Mapbox не вернул маршруты для дополнения")
+
+    store.add_options(body.track_id, options)
+    supplement_id = options[0].anomaly_id
+    lo, hi = sorted((body.start_index, body.end_index))
+    road_n = sum(1 for o in options if o.method == "supplement_fill")
+    return SupplementResponse(
+        track_id=body.track_id,
+        supplement_id=supplement_id,
+        start_index=lo,
+        end_index=hi,
+        options=options,
+        message=f"Дополнение A→B: {road_n} маршрут(ов) по карте. Якорные точки #{lo} и #{hi} сохранятся.",
     )
 
 

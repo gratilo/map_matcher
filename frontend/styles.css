@@ -364,6 +364,26 @@ button:disabled {
   font-size: 0.88rem;
 }
 
+.supplement-panel {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.swatch.supplement {
+  background: #56e6a8;
+}
+
+.supplement-routes {
+  margin-top: 0.85rem;
+}
+
+.supplement-routes h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  font-family: var(--display);
+}
+
 .manual-connect {
   margin-top: 1.25rem;
   padding-top: 0.75rem;
