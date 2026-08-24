@@ -356,6 +356,10 @@ button:disabled {
   background: var(--fix);
 }
 
+.swatch.snap {
+  background: #ff4fd8;
+}
+
 .lede.small {
   font-size: 0.88rem;
 }

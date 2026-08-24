@@ -55,29 +55,59 @@ async def build_repair_options(
                             )
                     except MapboxError:
                         continue
+                continue
 
-            # Spike / noise / jump: map match a local window
-            window = _window_points(track, anomaly, pad=4)
+            # Spike / noise / jump: try Directions between ends + Map Matching on a window
+            start = track.points[anomaly.start_index]
+            end = track.points[anomaly.end_index]
+            for profile in profiles:
+                try:
+                    result = await client.directions(start, end, profile=profile)
+                    geom = result["geometry"]
+                    if len(geom) >= 2:
+                        options.append(
+                            RepairOption(
+                                id=f"opt-{uuid.uuid4().hex[:8]}",
+                                anomaly_id=anomaly.id,
+                                label=f"Объехать по дорогам ({profile})",
+                                description="Заменить скачок маршрутом Mapbox Directions",
+                                profile=profile,
+                                method="directions_fill",
+                                confidence=0.75,
+                                geometry=geom,
+                                replaces_from=anomaly.start_index,
+                                replaces_to=anomaly.end_index,
+                            )
+                        )
+                except MapboxError:
+                    continue
+
+            window = _window_points(track, anomaly, pad=3)
             if len(window) >= 2:
                 for profile in profiles:
                     try:
-                        matched = await client.map_match(window, profile=profile)
+                        matched = await client.map_match(window, profile=profile, radius_m=50.0)
                         geom = matched["geometry"]
-                        if len(geom) >= 2:
-                            options.append(
-                                RepairOption(
-                                    id=f"opt-{uuid.uuid4().hex[:8]}",
-                                    anomaly_id=anomaly.id,
-                                    label=f"Snap к дорогам ({profile})",
-                                    description="Притянуть участок к дорожному графу через Map Matching",
-                                    profile=profile,
-                                    method="map_match",
-                                    confidence=matched.get("confidence"),
-                                    geometry=geom,
-                                    replaces_from=max(0, anomaly.start_index - 4),
-                                    replaces_to=min(len(track.points) - 1, anomaly.end_index + 4),
-                                )
+                        conf = float(matched.get("confidence") or 0)
+                        if len(geom) < 2:
+                            continue
+                        label = f"Snap к дорогам ({profile})"
+                        if conf < 0.1:
+                            label += " · низкая уверенность"
+                        options.append(
+                            RepairOption(
+                                id=f"opt-{uuid.uuid4().hex[:8]}",
+                                anomaly_id=anomaly.id,
+                                label=label,
+                                description="Притянуть участок к дорожному графу через Map Matching",
+                                profile=profile,
+                                method="map_match",
+                                confidence=conf,
+                                geometry=geom,
+                                replaces_from=max(0, anomaly.start_index - 3),
+                                replaces_to=min(len(track.points) - 1, anomaly.end_index + 3),
                             )
+                        )
                     except MapboxError:
                         continue
 

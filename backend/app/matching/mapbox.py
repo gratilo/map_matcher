@@ -46,6 +46,7 @@ class MapboxClient:
         points: list[TrackPoint],
         profile: str = "driving",
         radiuses: Optional[list[float]] = None,
+        radius_m: float = 50.0,
     ) -> dict[str, Any]:
         if len(points) < 2:
             raise MapboxError("Need at least 2 points for map matching")
@@ -54,31 +55,44 @@ class MapboxClient:
         chunk_size = self.settings.match_chunk_size
         geometries: list[list[TrackPoint]] = []
         confidences: list[float] = []
+        # Mapbox caps search radius by profile.
+        max_radius = 50.0 if profile == "driving" else 100.0
+        effective_radius = min(radius_m, max_radius)
 
         assert self._client is not None
-        for start in range(0, len(points), chunk_size - 1 if len(points) > chunk_size else chunk_size):
+        step = chunk_size - 1 if len(points) > chunk_size else chunk_size
+        for start in range(0, len(points), max(step, 1)):
             chunk = points[start : start + chunk_size]
             if len(chunk) < 2:
                 continue
             coords = ";".join(f"{p.lon:.6f},{p.lat:.6f}" for p in chunk)
             url = f"{self.settings.mapbox_base_url}/matching/v5/{profile_path}/{coords}"
+            # Radiuses help Mapbox snap noisy GPS; without them match often returns conf≈0.
+            if radiuses is not None:
+                chunk_r = radiuses[start : start + len(chunk)]
+                if len(chunk_r) != len(chunk):
+                    chunk_r = [radius_m] * len(chunk)
+            else:
+                chunk_r = [effective_radius] * len(chunk)
+
             params: dict[str, Any] = {
                 "access_token": token,
                 "geometries": "geojson",
                 "overview": "full",
                 "tidy": "true",
+                "radiuses": ";".join(str(int(max(1, min(r, max_radius)))) for r in chunk_r),
             }
-            if radiuses:
-                chunk_r = radiuses[start : start + len(chunk)]
-                if len(chunk_r) == len(chunk):
-                    params["radiuses"] = ";".join(str(int(r)) for r in chunk_r)
+            # Timestamps improve matching when present and strictly increasing.
+            if all(p.time is not None for p in chunk):
+                ts = [int(p.time.timestamp()) for p in chunk]
+                if all(ts[i] < ts[i + 1] for i in range(len(ts) - 1)):
+                    params["timestamps"] = ";".join(str(t) for t in ts)
 
             resp = await self._client.get(url, params=params)
             if resp.status_code >= 400:
                 raise MapboxError(f"Map Matching failed ({resp.status_code}): {resp.text[:300]}")
             payload = resp.json()
             if payload.get("code") not in (None, "Ok"):
-                # Continue trying other chunks/profiles; caller decides
                 raise MapboxError(f"Map Matching code={payload.get('code')}: {payload.get('message')}")
             matchings = payload.get("matchings") or []
             if not matchings:
@@ -94,7 +108,6 @@ class MapboxClient:
             if not merged:
                 merged = part
             else:
-                # Avoid duplicating join point
                 merged.extend(part[1:] if part and merged and part[0].lat == merged[-1].lat else part)
 
         return {

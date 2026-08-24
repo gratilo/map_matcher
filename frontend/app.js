@@ -6,10 +6,11 @@
     pointA: null,
     pointB: null,
     connectId: null,
+    focusedOptionId: null,
     layers: {
       raw: null,
       anomalies: [],
-      preview: null,
+      previews: [],
       markerA: null,
       markerB: null,
       manualRoutes: [],
@@ -108,11 +109,13 @@
     }
     state.layers.anomalies.forEach((layer) => map.removeLayer(layer));
     state.layers.anomalies = [];
-    if (state.layers.preview) {
-      map.removeLayer(state.layers.preview);
-      state.layers.preview = null;
-    }
+    clearPreviews();
     clearManualOverlays();
+  }
+
+  function clearPreviews() {
+    state.layers.previews.forEach((layer) => map.removeLayer(layer));
+    state.layers.previews = [];
   }
 
   function toLatLngs(points) {
@@ -181,26 +184,60 @@
     drawPickMarkers();
   }
 
-  function previewSelection() {
-    if (state.layers.preview) {
-      map.removeLayer(state.layers.preview);
-      state.layers.preview = null;
-    }
+  function previewSelection(focusOptionId = null) {
+    clearPreviews();
     if (!state.analysis) return;
 
-    const parts = [];
+    if (focusOptionId) state.focusedOptionId = focusOptionId;
+    let focusLayer = null;
+
     for (const optionId of Object.values(state.selections)) {
       const opt = findOption(optionId);
       if (!opt || opt.method === "keep" || !opt.geometry?.length) continue;
-      parts.push(...opt.geometry);
+      const isFocus = opt.id === state.focusedOptionId;
+      const color =
+        opt.method === "map_match"
+          ? "#ff4fd8"
+          : opt.method === "directions_fill"
+            ? "#f0c35a"
+            : "#9ad0ff";
+      const layer = L.polyline(toLatLngs(opt.geometry), {
+        color,
+        weight: isFocus ? 7 : 4,
+        opacity: isFocus ? 1 : 0.45,
+        dashArray: opt.method === "interpolate" ? "6 8" : null,
+      }).addTo(map);
+      layer.bindTooltip(
+        `${opt.label} · ${opt.geometry.length} точек` +
+          (opt.confidence != null ? ` · conf ${(opt.confidence * 100).toFixed(0)}%` : ""),
+        { sticky: true }
+      );
+      state.layers.previews.push(layer);
+      if (isFocus) focusLayer = layer;
     }
-    if (!parts.length) return;
-    state.layers.preview = L.polyline(toLatLngs(parts), {
-      color: "#f0c35a",
-      weight: 5,
-      opacity: 0.95,
-      dashArray: "8 6",
-    }).addTo(map);
+
+    if (focusLayer && focusLayer.getBounds().isValid()) {
+      map.fitBounds(focusLayer.getBounds(), { padding: [48, 48], maxZoom: 16 });
+    }
+  }
+
+  function selectOption(anomalyId, optionId) {
+    state.selections[anomalyId] = optionId;
+    const opt = findOption(optionId);
+    previewSelection(optionId);
+    if (!opt) {
+      setStatus("Вариант выбран, но геометрия не найдена.", true);
+      return;
+    }
+    if (opt.method === "keep") {
+      setStatus("Оставляем участок как в файле.");
+      return;
+    }
+    const conf =
+      opt.confidence != null ? `, уверенность ${(opt.confidence * 100).toFixed(0)}%` : "";
+    setStatus(
+      `На карте: ${opt.label} (${opt.geometry.length} точек${conf}). Mapbox считается при анализе, выбор только переключает готовый вариант.`
+    );
   }
 
   function nearestPointIndex(latlng) {
@@ -295,12 +332,12 @@
       row.querySelector("input").addEventListener("change", () => {
         state.selections[connectId] = opt.id;
         suppressOverlappingAutoFixes(opt.replaces_from, opt.replaces_to);
-        previewSelection();
+        selectOption(connectId, opt.id);
       });
       els.manualRoutes.appendChild(row);
     });
 
-    previewSelection();
+    if (preferred) selectOption(connectId, preferred.id);
   }
 
   function renderSummary(analysis) {
@@ -330,7 +367,9 @@
     analysis.anomalies.forEach((anomaly, idx) => {
       const options = analysis.options.filter((o) => o.anomaly_id === anomaly.id);
       const preferred =
-        options.find((o) => o.method === "map_match" || o.method === "directions_fill") ||
+        options.find((o) => o.method === "directions_fill") ||
+        options.find((o) => o.method === "map_match" && (o.confidence == null || o.confidence >= 0.1)) ||
+        options.find((o) => o.method === "map_match") ||
         options.find((o) => o.method === "interpolate") ||
         options[0];
       if (preferred) state.selections[anomaly.id] = preferred.id;
@@ -359,8 +398,7 @@
           </div>
         `;
         row.querySelector("input").addEventListener("change", () => {
-          state.selections[anomaly.id] = opt.id;
-          previewSelection();
+          selectOption(anomaly.id, opt.id);
         });
         box.appendChild(row);
       });
@@ -378,7 +416,9 @@
     });
 
     els.applyBtn.disabled = false;
-    previewSelection();
+    const firstId = Object.values(state.selections)[0];
+    if (firstId) previewSelection(firstId);
+    else previewSelection();
   }
 
   map.on("click", (e) => {
