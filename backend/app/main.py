@@ -98,7 +98,7 @@ async def connect(body: ConnectRequest) -> ConnectResponse:
     if rec is None:
         raise HTTPException(status_code=404, detail="Track session not found or expired")
 
-    track = rec.repaired or rec.analysis.track
+    track = store.current_track(body.track_id)
     try:
         options = await build_manual_connect_options(
             track,
@@ -135,10 +135,13 @@ async def apply(body: ApplyRepairsRequest) -> ApplyRepairsResponse:
     if rec is None:
         raise HTTPException(status_code=404, detail="Track session not found or expired")
 
+    track = store.current_track(body.track_id)
     try:
-        repaired = apply_repairs(rec.analysis.track, rec.options_by_id, body.selections)
+        repaired = apply_repairs(track, rec.options_by_id, body.selections)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Track session not found or expired") from exc
 
     store.set_repaired(body.track_id, repaired)
     return ApplyRepairsResponse(
@@ -146,6 +149,7 @@ async def apply(body: ApplyRepairsRequest) -> ApplyRepairsResponse:
         point_count=len(repaired.points),
         applied=list(body.selections.values()),
         download_path=f"/api/download/{body.track_id}?format={body.export_format}",
+        track=repaired,
     )
 
 

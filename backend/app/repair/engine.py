@@ -278,14 +278,13 @@ def apply_repairs(
     # Apply from the end so indices stay valid
     points = list(track.points)
     for opt in sorted(chosen, key=lambda o: o.replaces_from, reverse=True):
-        left = points[: opt.replaces_from]
-        right = points[opt.replaces_to + 1 :]
-        mid = list(opt.geometry)
-        # Avoid duplicating endpoints if geometry already includes them
-        if mid and left and _same_point(left[-1], mid[0]):
-            mid = mid[1:]
-        if mid and right and _same_point(mid[-1], right[0]):
-            mid = mid[:-1]
+        lo = max(0, min(opt.replaces_from, len(points) - 1))
+        hi = max(0, min(opt.replaces_to, len(points) - 1))
+        if hi < lo:
+            lo, hi = hi, lo
+        left = points[:lo]
+        right = points[hi + 1 :]
+        mid = _prepare_insert_geometry(points, lo, hi, list(opt.geometry))
         points = left + mid + right
 
     return Track(
@@ -294,6 +293,40 @@ def apply_repairs(
         source_format=track.source_format,
         metadata={**track.metadata, "repaired": True},
     )
+
+
+def _prepare_insert_geometry(
+    points: list[TrackPoint],
+    lo: int,
+    hi: int,
+    geometry: list[TrackPoint],
+) -> list[TrackPoint]:
+    if not geometry:
+        return geometry
+    start = points[lo]
+    end = points[hi]
+    mid = [TrackPoint(**p.model_dump()) for p in geometry]
+    if mid:
+        mid[0] = TrackPoint(
+            lat=mid[0].lat,
+            lon=mid[0].lon,
+            ele=mid[0].ele if mid[0].ele is not None else start.ele,
+            time=mid[0].time if mid[0].time is not None else start.time,
+            hdop=mid[0].hdop if mid[0].hdop is not None else start.hdop,
+        )
+        mid[-1] = TrackPoint(
+            lat=mid[-1].lat,
+            lon=mid[-1].lon,
+            ele=mid[-1].ele if mid[-1].ele is not None else end.ele,
+            time=mid[-1].time if mid[-1].time is not None else end.time,
+            hdop=mid[-1].hdop if mid[-1].hdop is not None else end.hdop,
+        )
+    # Avoid duplicating endpoints if geometry already includes them
+    if mid and lo > 0 and _same_point(points[lo - 1], mid[0]):
+        mid = mid[1:]
+    if mid and hi + 1 < len(points) and _same_point(mid[-1], points[hi + 1]):
+        mid = mid[:-1]
+    return mid
 
 
 def _same_point(a: TrackPoint, b: TrackPoint, eps: float = 1e-6) -> bool:

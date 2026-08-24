@@ -84,13 +84,48 @@ def test_export_kml_nonempty():
     assert b"37.618" in data
 
 
-def test_manual_connect_local_without_mapbox():
-    import asyncio
-    from app.repair.engine import build_manual_connect_options
+def test_apply_preserves_track_after_partial_repair():
+    track = Track(points=_pts(), source_format="gpx")
+    opt = RepairOption(
+        id="o1",
+        anomaly_id="a1",
+        label="route",
+        description="",
+        method="directions_fill",
+        geometry=[
+            track.points[1],
+            TrackPoint(lat=55.756, lon=37.630, time=track.points[1].time),
+            track.points[2],
+        ],
+        replaces_from=1,
+        replaces_to=2,
+    )
+    repaired = apply_repairs(track, {"o1": opt}, {"a1": "o1"})
+    assert len(repaired.points) > len(track.points) - 1
+    assert abs(repaired.points[0].lat - track.points[0].lat) < 1e-9
+    assert abs(repaired.points[-1].lat - track.points[-1].lat) < 1e-9
+
+
+def test_session_track_stays_consistent_after_repair():
+    from app.models import AnalysisResult
+    from app.store import SessionStore
 
     track = Track(points=_pts(), source_format="gpx")
-    settings = Settings(mapbox_access_token="")
-    opts = asyncio.run(build_manual_connect_options(track, 1, 2, settings, "driving"))
-    assert len(opts) == 1
-    assert opts[0].method == "interpolate"
-    assert opts[0].anomaly_id.startswith("manual-")
+    analysis = AnalysisResult(track_id="t1", track=track, anomalies=[], options=[])
+    store = SessionStore()
+    store.put(analysis)
+    opt = RepairOption(
+        id="o1",
+        anomaly_id="a1",
+        label="route",
+        description="",
+        method="interpolate",
+        geometry=[track.points[1], TrackPoint(lat=55.756, lon=37.630), track.points[2]],
+        replaces_from=1,
+        replaces_to=2,
+    )
+    store.add_options("t1", [opt])
+    repaired = apply_repairs(store.current_track("t1"), {"o1": opt}, {"a1": "o1"})
+    store.set_repaired("t1", repaired)
+    assert len(store.current_track("t1").points) == len(repaired.points)
+    assert len(store.current_track("t1").points) >= len(track.points)

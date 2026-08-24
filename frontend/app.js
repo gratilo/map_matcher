@@ -550,8 +550,26 @@
     }
   });
 
+  function buildApplySelections() {
+    // Manual A→B: apply only that variant (not every auto-selected anomaly).
+    if (state.connectId && state.selections[state.connectId]) {
+      return { [state.connectId]: state.selections[state.connectId] };
+    }
+    const out = {};
+    for (const [anomalyId, optionId] of Object.entries(state.selections)) {
+      const opt = findOption(optionId);
+      if (opt && opt.method !== "keep") out[anomalyId] = optionId;
+    }
+    return out;
+  }
+
   els.applyBtn.addEventListener("click", async () => {
     if (!state.analysis) return;
+    const selections = buildApplySelections();
+    if (!Object.keys(selections).length) {
+      setStatus("Выберите вариант исправления (не «Оставить как есть»).", true);
+      return;
+    }
     els.applyBtn.disabled = true;
     setStatus("Применяем исправления…");
     try {
@@ -560,14 +578,36 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           track_id: state.analysis.track_id,
-          selections: state.selections,
+          selections,
           export_format: els.exportFormat.value,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Ошибка применения");
-      window.location.href = data.download_path;
-      setStatus(`Скачивание: ${data.point_count} точек`);
+
+      if (data.track) {
+        state.analysis.track = data.track;
+        state.analysis.summary.point_count = data.point_count;
+        state.pointA = null;
+        state.pointB = null;
+        state.connectId = null;
+        state.selections = {};
+        els.manualRoutes.hidden = true;
+        els.manualRoutes.innerHTML = "";
+        drawTrack(state.analysis);
+        renderSummary(state.analysis);
+        updatePickUI();
+      }
+
+      const a = document.createElement("a");
+      a.href = data.download_path;
+      a.download = "";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setStatus(
+        `Готово: ${data.point_count} точек (исходный трек + исправленный участок). Файл скачан.`
+      );
     } catch (err) {
       setStatus(err.message || String(err), true);
     } finally {

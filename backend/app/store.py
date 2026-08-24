@@ -43,6 +43,7 @@ class SessionStore:
             if rec is None:
                 raise KeyError(track_id)
             rec.repaired = track
+            rec.analysis.track = track
 
     def add_options(self, track_id: str, options: list[RepairOption]) -> None:
         with self._lock:
@@ -54,6 +55,12 @@ class SessionStore:
                 rec.options_by_id[opt.id] = opt
                 if opt.id not in existing_ids:
                     rec.analysis.options.append(opt)
+
+    def current_track(self, track_id: str) -> Track:
+        rec = self.get(track_id)
+        if rec is None:
+            raise KeyError(track_id)
+        return rec.repaired or rec.analysis.track
 
     def _cleanup(self) -> None:
         now = time.time()

@@ -87,6 +87,7 @@ class ApplyRepairsResponse(BaseModel):
     point_count: int
     applied: list[str]
     download_path: str
+    track: Optional[Track] = None
 
 
 class ConnectRequest(BaseModel):
