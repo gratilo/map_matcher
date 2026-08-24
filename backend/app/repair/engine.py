@@ -36,18 +36,24 @@ async def build_repair_options(
                 end = track.points[anomaly.end_index]
                 for profile in profiles:
                     try:
-                        result = await client.directions(start, end, profile=profile)
-                        geom = result["geometry"]
-                        if len(geom) >= 2:
+                        routes = await client.directions(start, end, profile=profile)
+                        for result in routes:
+                            geom = result["geometry"]
+                            if len(geom) < 2:
+                                continue
+                            alt = result.get("alternative_index") or 0
+                            label = f"Маршрут по карте ({profile})"
+                            if alt:
+                                label += f" · альт. {alt}"
                             options.append(
                                 RepairOption(
                                     id=f"opt-{uuid.uuid4().hex[:8]}",
                                     anomaly_id=anomaly.id,
-                                    label=f"Маршрут по карте ({profile})",
-                                    description="Построить путь между концами разрыва через Mapbox Directions",
+                                    label=label,
+                                    description="Путь по дорогам Mapbox Directions между концами разрыва",
                                     profile=profile,
                                     method="directions_fill",
-                                    confidence=0.8,
+                                    confidence=0.8 - 0.05 * alt,
                                     geometry=geom,
                                     replaces_from=anomaly.start_index,
                                     replaces_to=anomaly.end_index,
@@ -83,6 +89,84 @@ async def build_repair_options(
 
     # Deduplicate by (anomaly, method, profile) keeping highest confidence
     return _dedupe(options)
+
+
+async def build_manual_connect_options(
+    track: Track,
+    start_index: int,
+    end_index: int,
+    settings: Settings,
+    profile_hint: str = "mixed",
+) -> list[RepairOption]:
+    """Build Mapbox route options between two user-picked track points."""
+    n = len(track.points)
+    if start_index < 0 or end_index < 0 or start_index >= n or end_index >= n:
+        raise ValueError("Point indices out of range")
+    if start_index == end_index:
+        raise ValueError("Pick two different points")
+    lo, hi = sorted((start_index, end_index))
+    if hi - lo < 1:
+        raise ValueError("Segment too short")
+
+    connect_id = f"manual-{uuid.uuid4().hex[:8]}"
+    start = track.points[lo]
+    end = track.points[hi]
+    profiles = list(settings.default_profiles) if profile_hint == "mixed" else [profile_hint]
+    options: list[RepairOption] = [
+        RepairOption(
+            id=f"opt-{uuid.uuid4().hex[:8]}",
+            anomaly_id=connect_id,
+            label="Прямая линия (без карты)",
+            description="Соединить выбранные точки по прямой — только для сравнения",
+            method="interpolate",
+            confidence=0.2,
+            geometry=[start, *interpolate_points(start, end, count=max(3, min(20, hi - lo))), end],
+            replaces_from=lo,
+            replaces_to=hi,
+        )
+    ]
+
+    if not settings.mapbox_ready():
+        return options
+
+    async with MapboxClient(settings) as client:
+        for profile in profiles:
+            try:
+                routes = await client.directions(start, end, profile=profile, alternatives=True)
+            except MapboxError:
+                continue
+            for result in routes:
+                geom = result["geometry"]
+                if len(geom) < 2:
+                    continue
+                alt = int(result.get("alternative_index") or 0)
+                dist = result.get("distance")
+                dur = result.get("duration")
+                meta = []
+                if dist is not None:
+                    meta.append(f"{dist / 1000:.2f} км")
+                if dur is not None:
+                    meta.append(f"{dur / 60:.0f} мин")
+                suffix = f" · {' · '.join(meta)}" if meta else ""
+                alt_label = f" · вариант {alt + 1}" if len(routes) > 1 else ""
+                options.append(
+                    RepairOption(
+                        id=f"opt-{uuid.uuid4().hex[:8]}",
+                        anomaly_id=connect_id,
+                        label=f"По дорогам · {profile}{alt_label}{suffix}",
+                        description="Маршрут Mapbox Directions между выбранными точками A и B",
+                        profile=profile,
+                        method="directions_fill",
+                        confidence=0.9 - 0.05 * alt,
+                        geometry=geom,
+                        replaces_from=lo,
+                        replaces_to=hi,
+                    )
+                )
+
+    if len(options) == 1:
+        raise MapboxError("Mapbox не вернул маршруты между выбранными точками")
+    return options
 
 
 def _local_options(track: Track, anomaly: Anomaly) -> list[RepairOption]:

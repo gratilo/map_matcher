@@ -26,8 +26,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | Метод | Путь | Описание |
 |-------|------|----------|
 | `GET` | `/api/health` | Статус и наличие Mapbox-токена |
-| `POST` | `/api/analyze` | `multipart/form-data`: `file`, `profile` (`mixed\|driving\|cycling\|walking`) |
-| `POST` | `/api/apply` | JSON: `track_id`, `selections` (`anomaly_id → option_id`), `export_format` |
+| `POST` | `/api/analyze` | Загрузка файла: парсинг + подсказки разрывов (без авто-маршрутов) |
+| `POST` | `/api/connect` | JSON: `track_id`, `start_index`, `end_index`, `profile` → варианты Mapbox Directions |
+| `POST` | `/api/apply` | JSON: `track_id`, `selections` (`connect_id → option_id`), `export_format` |
 | `GET` | `/api/download/{track_id}?format=gpx\|kml` | Скачать результат |
 
 ### Пример
@@ -39,15 +40,12 @@ curl -s -F file=@samples/broken_track.gpx -F profile=mixed \
 
 ## Как это устроено
 
-1. **Parse** — GPX / KML / FIT → единый список точек
-2. **Detect** — эвристики: time/distance gap, невозможная скорость, зигзаги
-3. **Propose** — для каждой аномалии:
-   - локально: keep / interpolate / discard
-   - Mapbox Directions: заполнить разрыв маршрутом (по профилям)
-   - Mapbox Map Matching: притянуть окно точек к дорогам
-4. **Apply** — пользователь выбирает вариант → экспорт GPX/KML
+1. **Загрузка** — GPX / KML / FIT на карту. Разрывы **не** рисуются сплошной прямой: сегменты обрываются, пунктир — только подсказка «здесь дыра в файле».
+2. **Выбор A и B** — клик по треку (или кнопка-подсказка разрыва): точка разрыва и точка соединения.
+3. **Маршруты** — `POST /api/connect` дергает Mapbox Directions между A и B (профили + альтернативы).
+4. **Выбор и применение** — на карте видны варианты по дорогам; выбранный вставляется вместо участка A…B.
 
-Профиль `mixed` запрашивает варианты для `driving`, `cycling` и `walking`.
+Прямая линия в списке вариантов — только для сравнения (`interpolate`), это не map matching.
 
 ## Структура
 

@@ -87,3 +87,21 @@ class ApplyRepairsResponse(BaseModel):
     point_count: int
     applied: list[str]
     download_path: str
+    track: Optional[Track] = None
+    anomalies: list[Anomaly] = Field(default_factory=list)
+
+
+class ConnectRequest(BaseModel):
+    track_id: str
+    start_index: int
+    end_index: int
+    profile: str = "mixed"
+
+
+class ConnectResponse(BaseModel):
+    track_id: str
+    connect_id: str
+    start_index: int
+    end_index: int
+    options: list[RepairOption]
+    message: str = ""

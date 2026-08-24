@@ -1,11 +1,20 @@
 (() => {
+  const ROUTE_COLORS = ["#f0c35a", "#7aa2ff", "#e89a6a", "#c3e86b", "#c9a0ff", "#7ec8b8"];
+
   const state = {
     analysis: null,
-    selections: {},
+    pickStep: "a", // a | b
+    pointA: null,
+    pointB: null,
+    connectId: null,
+    selectedOptionId: null,
+    routeOptions: [],
     layers: {
-      raw: null,
-      anomalies: [],
-      preview: null,
+      segments: [],
+      gapHints: [],
+      routes: [],
+      markerA: null,
+      markerB: null,
     },
   };
 
@@ -16,12 +25,21 @@
     profile: document.getElementById("profile"),
     status: document.getElementById("status"),
     summary: document.getElementById("summary"),
-    anomalies: document.getElementById("anomalies"),
-    anomalyList: document.getElementById("anomaly-list"),
+    connectPanel: document.getElementById("connect-panel"),
+    hintList: document.getElementById("hint-list"),
+    routeList: document.getElementById("route-list"),
+    routes: document.getElementById("routes"),
     applyBtn: document.getElementById("apply-btn"),
+    connectBtn: document.getElementById("connect-btn"),
+    resetPicks: document.getElementById("reset-picks"),
     exportFormat: document.getElementById("export-format"),
     health: document.getElementById("health"),
     analyzeBtn: document.getElementById("analyze-btn"),
+    pickAVal: document.getElementById("pick-a-val"),
+    pickBVal: document.getElementById("pick-b-val"),
+    pickA: document.getElementById("pick-a"),
+    pickB: document.getElementById("pick-b"),
+    mapHint: document.getElementById("map-hint"),
   };
 
   const map = L.map("map", { zoomControl: true }).setView([55.75, 37.62], 10);
@@ -35,6 +53,31 @@
     els.status.classList.toggle("error", Boolean(isError));
   }
 
+  function pointLabel(idx) {
+    const p = state.analysis?.track?.points?.[idx];
+    if (!p) return "не выбрана";
+    return `#${idx} · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`;
+  }
+
+  function updatePickUI() {
+    els.pickAVal.textContent = state.pointA == null ? "не выбрана" : pointLabel(state.pointA);
+    els.pickBVal.textContent = state.pointB == null ? "не выбрана" : pointLabel(state.pointB);
+    els.pickA.classList.toggle("active", state.pickStep === "a");
+    els.pickB.classList.toggle("active", state.pickStep === "b");
+    const ready = state.pointA != null && state.pointB != null && state.pointA !== state.pointB;
+    els.connectBtn.disabled = !ready;
+    els.resetPicks.disabled = state.pointA == null && state.pointB == null;
+    if (!state.analysis) {
+      els.mapHint.textContent = "Загрузите трек, затем кликните точку A и точку B";
+    } else if (state.pointA == null) {
+      els.mapHint.textContent = "Шаг 1: кликните на трек — точка разрыва (A)";
+    } else if (state.pointB == null) {
+      els.mapHint.textContent = "Шаг 2: кликните точку соединения (B)";
+    } else {
+      els.mapHint.textContent = "A и B выбраны — постройте маршруты";
+    }
+  }
+
   async function checkHealth() {
     try {
       const res = await fetch("/api/health");
@@ -44,7 +87,7 @@
         els.health.textContent = "Mapbox: подключён";
         els.health.className = "health ok";
       } else {
-        els.health.textContent = "Mapbox: нет токена (локальные фиксы)";
+        els.health.textContent = "Mapbox: нет токена";
         els.health.className = "health warn";
       }
     } catch {
@@ -54,16 +97,19 @@
     }
   }
 
-  function clearLayers() {
-    if (state.layers.raw) {
-      map.removeLayer(state.layers.raw);
-      state.layers.raw = null;
+  function clearLayerGroup(key) {
+    (state.layers[key] || []).forEach((layer) => map.removeLayer(layer));
+    state.layers[key] = [];
+  }
+
+  function clearMarkers() {
+    if (state.layers.markerA) {
+      map.removeLayer(state.layers.markerA);
+      state.layers.markerA = null;
     }
-    state.layers.anomalies.forEach((layer) => map.removeLayer(layer));
-    state.layers.anomalies = [];
-    if (state.layers.preview) {
-      map.removeLayer(state.layers.preview);
-      state.layers.preview = null;
+    if (state.layers.markerB) {
+      map.removeLayer(state.layers.markerB);
+      state.layers.markerB = null;
     }
   }
 
@@ -71,50 +117,108 @@
     return points.map((p) => [p.lat, p.lon]);
   }
 
-  function drawTrack(analysis) {
-    clearLayers();
-    const latlngs = toLatLngs(analysis.track.points);
-    state.layers.raw = L.polyline(latlngs, {
-      color: "#7ec8b8",
-      weight: 4,
-      opacity: 0.9,
-    }).addTo(map);
-
-    analysis.anomalies.forEach((a) => {
-      const slice = analysis.track.points.slice(a.start_index, a.end_index + 1);
-      if (slice.length < 2) return;
-      const layer = L.polyline(toLatLngs(slice), {
-        color: "#e06b5c",
-        weight: 6,
-        opacity: 0.95,
-      }).addTo(map);
-      layer.bindPopup(`<strong>${a.type}</strong><br>${a.message}`);
-      state.layers.anomalies.push(layer);
-    });
-
-    map.fitBounds(state.layers.raw.getBounds(), { padding: [28, 28] });
+  function nearestPointIndex(latlng) {
+    const pts = state.analysis.track.points;
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const d = map.distance(latlng, L.latLng(pts[i].lat, pts[i].lon));
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best;
   }
 
-  function previewSelection() {
-    if (state.layers.preview) {
-      map.removeLayer(state.layers.preview);
-      state.layers.preview = null;
-    }
-    if (!state.analysis) return;
+  function gapIndexSet() {
+    const set = new Set();
+    (state.analysis?.anomalies || []).forEach((a) => {
+      if (a.type === "gap") set.add(a.start_index);
+    });
+    return set;
+  }
 
-    const parts = [];
-    for (const [anomalyId, optionId] of Object.entries(state.selections)) {
-      const opt = state.analysis.options.find((o) => o.id === optionId);
-      if (!opt || opt.method === "keep" || !opt.geometry?.length) continue;
-      parts.push(...opt.geometry);
+  function drawTrack() {
+    clearLayerGroup("segments");
+    clearLayerGroup("gapHints");
+    clearLayerGroup("routes");
+    clearMarkers();
+
+    const points = state.analysis.track.points;
+    const gaps = gapIndexSet();
+    let segment = [points[0]];
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      if (gaps.has(i)) {
+        if (segment.length >= 2) {
+          state.layers.segments.push(
+            L.polyline(toLatLngs(segment), { color: "#7ec8b8", weight: 4, opacity: 0.95 }).addTo(map)
+          );
+        }
+        // Do NOT draw a solid line across the gap — show dashed hint only
+        state.layers.gapHints.push(
+          L.polyline(
+            [
+              [a.lat, a.lon],
+              [b.lat, b.lon],
+            ],
+            {
+              color: "#e06b5c",
+              weight: 3,
+              opacity: 0.75,
+              dashArray: "2 10",
+            }
+          )
+            .bindPopup("Разрыв в файле (прямая только как подсказка, это не маршрут)")
+            .addTo(map)
+        );
+        segment = [b];
+      } else {
+        segment.push(b);
+      }
     }
-    if (!parts.length) return;
-    state.layers.preview = L.polyline(toLatLngs(parts), {
-      color: "#f0c35a",
-      weight: 5,
-      opacity: 0.95,
-      dashArray: "8 6",
-    }).addTo(map);
+    if (segment.length >= 2) {
+      state.layers.segments.push(
+        L.polyline(toLatLngs(segment), { color: "#7ec8b8", weight: 4, opacity: 0.95 }).addTo(map)
+      );
+    }
+
+    const all = toLatLngs(points);
+    if (all.length) map.fitBounds(L.latLngBounds(all), { padding: [28, 28] });
+    drawPickMarkers();
+  }
+
+  function drawPickMarkers() {
+    clearMarkers();
+    const pts = state.analysis?.track?.points;
+    if (!pts) return;
+    if (state.pointA != null) {
+      const p = pts[state.pointA];
+      state.layers.markerA = L.circleMarker([p.lat, p.lon], {
+        radius: 9,
+        color: "#1a1408",
+        weight: 2,
+        fillColor: "#e06b5c",
+        fillOpacity: 1,
+      })
+        .bindTooltip("A", { permanent: true, direction: "top" })
+        .addTo(map);
+    }
+    if (state.pointB != null) {
+      const p = pts[state.pointB];
+      state.layers.markerB = L.circleMarker([p.lat, p.lon], {
+        radius: 9,
+        color: "#1a1408",
+        weight: 2,
+        fillColor: "#7ec8b8",
+        fillOpacity: 1,
+      })
+        .bindTooltip("B", { permanent: true, direction: "top" })
+        .addTo(map);
+    }
   }
 
   function renderSummary(analysis) {
@@ -123,64 +227,178 @@
     els.summary.innerHTML = `
       <div><strong>${s.point_count ?? analysis.track.points.length}</strong><span>точек</span></div>
       <div><strong>${Math.round(s.length_m || 0)}</strong><span>метров</span></div>
-      <div><strong>${s.anomaly_count ?? analysis.anomalies.length}</strong><span>аномалий</span></div>
+      <div><strong>${s.anomaly_count ?? analysis.anomalies.length}</strong><span>подсказок</span></div>
     `;
   }
 
-  function renderAnomalies(analysis) {
-    els.anomalies.hidden = false;
-    els.anomalyList.innerHTML = "";
-    state.selections = {};
-
-    if (!analysis.anomalies.length) {
-      els.anomalyList.innerHTML = `<p class="lede">Аномалий не найдено. Можно скачать трек как есть.</p>`;
-      els.applyBtn.disabled = false;
+  function renderHints(analysis) {
+    els.hintList.innerHTML = "";
+    const gaps = (analysis.anomalies || []).filter((a) => a.type === "gap");
+    if (!gaps.length) {
+      els.hintList.innerHTML = `<p class="lede small">Авторазрывов не найдено — выберите A и B вручную на карте.</p>`;
       return;
     }
+    const title = document.createElement("h3");
+    title.className = "hints-title";
+    title.textContent = "Подсказки разрывов";
+    els.hintList.appendChild(title);
 
-    analysis.anomalies.forEach((anomaly, idx) => {
-      const options = analysis.options.filter((o) => o.anomaly_id === anomaly.id);
-      const preferred =
-        options.find((o) => o.method === "map_match" || o.method === "directions_fill") ||
-        options.find((o) => o.method === "interpolate") ||
-        options[0];
-      if (preferred) state.selections[anomaly.id] = preferred.id;
-
-      const card = document.createElement("article");
-      card.className = "anomaly-card";
-      card.style.animationDelay = `${idx * 40}ms`;
-      card.innerHTML = `
-        <h3>${anomaly.type.toUpperCase()} · severity ${(anomaly.severity * 100).toFixed(0)}%</h3>
-        <p>${anomaly.message} · точки ${anomaly.start_index}–${anomaly.end_index}</p>
-        <div class="options"></div>
-      `;
-      const box = card.querySelector(".options");
-      options.forEach((opt) => {
-        const row = document.createElement("label");
-        row.className = "option";
-        const conf =
-          opt.confidence != null ? ` · conf ${(opt.confidence * 100).toFixed(0)}%` : "";
-        row.innerHTML = `
-          <input type="radio" name="anomaly-${anomaly.id}" value="${opt.id}" ${
-            state.selections[anomaly.id] === opt.id ? "checked" : ""
-          } />
-          <div>
-            <strong>${opt.label}</strong>
-            <small>${opt.description}${conf}</small>
-          </div>
-        `;
-        row.querySelector("input").addEventListener("change", () => {
-          state.selections[anomaly.id] = opt.id;
-          previewSelection();
-        });
-        box.appendChild(row);
+    gaps.forEach((a) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "hint-btn";
+      row.textContent = `${a.message} → точки ${a.start_index}–${a.end_index}`;
+      row.addEventListener("click", () => {
+        state.pointA = a.start_index;
+        state.pointB = a.end_index;
+        state.pickStep = "a";
+        state.selectedOptionId = null;
+        state.routeOptions = [];
+        els.routeList.hidden = true;
+        els.applyBtn.disabled = true;
+        clearLayerGroup("routes");
+        drawPickMarkers();
+        updatePickUI();
+        setStatus("A/B подставлены из подсказки. Нажмите «Построить маршруты A→B».");
       });
-      els.anomalyList.appendChild(card);
+      els.hintList.appendChild(row);
+    });
+  }
+
+  function renderRoutes(options) {
+    els.routeList.hidden = false;
+    els.routes.innerHTML = "";
+    clearLayerGroup("routes");
+    state.routeOptions = options;
+
+    const roadFirst = [...options].sort((a, b) => {
+      const rank = (m) => (m === "directions_fill" ? 0 : 1);
+      return rank(a.method) - rank(b.method);
     });
 
-    els.applyBtn.disabled = false;
-    previewSelection();
+    roadFirst.forEach((opt, idx) => {
+      const color = ROUTE_COLORS[idx % ROUTE_COLORS.length];
+      if (opt.geometry?.length >= 2) {
+        const layer = L.polyline(toLatLngs(opt.geometry), {
+          color,
+          weight: opt.method === "interpolate" ? 3 : 5,
+          opacity: 0.35,
+          dashArray: opt.method === "interpolate" ? "6 8" : null,
+        }).addTo(map);
+        layer.on("click", () => selectOption(opt.id));
+        state.layers.routes.push(layer);
+        opt._layer = layer;
+        opt._color = color;
+      }
+
+      const row = document.createElement("label");
+      row.className = "option route-option";
+      row.innerHTML = `
+        <input type="radio" name="route-opt" value="${opt.id}" />
+        <div>
+          <strong><i class="swatch" style="background:${color}"></i> ${opt.label}</strong>
+          <small>${opt.description}</small>
+        </div>
+      `;
+      row.querySelector("input").addEventListener("change", () => selectOption(opt.id));
+      els.routes.appendChild(row);
+    });
+
+    const preferred = roadFirst.find((o) => o.method === "directions_fill") || roadFirst[0];
+    if (preferred) selectOption(preferred.id);
   }
+
+  function selectOption(optionId) {
+    state.selectedOptionId = optionId;
+    els.applyBtn.disabled = !optionId;
+    els.routes.querySelectorAll('input[name="route-opt"]').forEach((input) => {
+      input.checked = input.value === optionId;
+    });
+    state.routeOptions.forEach((opt) => {
+      if (!opt._layer) return;
+      const selected = opt.id === optionId;
+      opt._layer.setStyle({
+        opacity: selected ? 0.95 : 0.25,
+        weight: selected ? 6 : opt.method === "interpolate" ? 3 : 4,
+      });
+      if (selected) opt._layer.bringToFront();
+    });
+  }
+
+  function setPoint(idx) {
+    if (state.pickStep === "a" || state.pointA == null) {
+      state.pointA = idx;
+      state.pickStep = "b";
+    } else {
+      state.pointB = idx;
+      state.pickStep = "a";
+    }
+    state.selectedOptionId = null;
+    state.routeOptions = [];
+    els.routeList.hidden = true;
+    els.applyBtn.disabled = true;
+    clearLayerGroup("routes");
+    drawPickMarkers();
+    updatePickUI();
+  }
+
+  map.on("click", (e) => {
+    if (!state.analysis) return;
+    const idx = nearestPointIndex(e.latlng);
+    setPoint(idx);
+  });
+
+  els.pickA.addEventListener("click", () => {
+    state.pickStep = "a";
+    updatePickUI();
+  });
+  els.pickB.addEventListener("click", () => {
+    state.pickStep = "b";
+    updatePickUI();
+  });
+
+  els.resetPicks.addEventListener("click", () => {
+    state.pointA = null;
+    state.pointB = null;
+    state.pickStep = "a";
+    state.selectedOptionId = null;
+    state.routeOptions = [];
+    els.routeList.hidden = true;
+    els.applyBtn.disabled = true;
+    clearLayerGroup("routes");
+    clearMarkers();
+    updatePickUI();
+  });
+
+  els.connectBtn.addEventListener("click", async () => {
+    if (!state.analysis || state.pointA == null || state.pointB == null) return;
+    els.connectBtn.disabled = true;
+    setStatus("Строим маршруты Mapbox между A и B…");
+    try {
+      const res = await fetch("/api/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          track_id: state.analysis.track_id,
+          start_index: state.pointA,
+          end_index: state.pointB,
+          profile: els.profile.value,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+      state.connectId = data.connect_id;
+      renderRoutes(data.options);
+      setStatus(data.message || "Выберите маршрут (жёлтый/цветной — по дорогам, пунктир — прямая).");
+      const bounds = [];
+      data.options.forEach((o) => o.geometry?.forEach((p) => bounds.push([p.lat, p.lon])));
+      if (bounds.length) map.fitBounds(bounds, { padding: [40, 40] });
+    } catch (err) {
+      setStatus(err.message || String(err), true);
+    } finally {
+      updatePickUI();
+    }
+  });
 
   els.file.addEventListener("change", () => {
     const name = els.file.files?.[0]?.name;
@@ -220,20 +438,28 @@
 
     els.analyzeBtn.disabled = true;
     els.applyBtn.disabled = true;
-    setStatus("Анализ трека…");
+    setStatus("Загрузка и поиск разрывов…");
 
     try {
       const res = await fetch("/api/analyze", { method: "POST", body });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Ошибка анализа");
+      if (!res.ok) throw new Error(data.detail || "Ошибка загрузки");
       state.analysis = data;
-      drawTrack(data);
+      state.pointA = null;
+      state.pointB = null;
+      state.pickStep = "a";
+      state.selectedOptionId = null;
+      state.routeOptions = [];
+      els.routeList.hidden = true;
+      els.connectPanel.hidden = false;
+      drawTrack();
       renderSummary(data);
-      renderAnomalies(data);
+      renderHints(data);
+      updatePickUI();
       setStatus(
         data.summary?.mapbox_configured
-          ? "Готово. Выберите варианты исправления."
-          : "Готово без Mapbox: доступны локальные варианты. Добавьте MAPBOX_ACCESS_TOKEN."
+          ? "Трек на карте. Выберите A и B (или подсказку разрыва), затем постройте маршруты."
+          : "Трек загружен, но Mapbox-токен не настроен — маршруты по дорогам недоступны."
       );
     } catch (err) {
       setStatus(err.message || String(err), true);
@@ -243,29 +469,54 @@
   });
 
   els.applyBtn.addEventListener("click", async () => {
-    if (!state.analysis) return;
+    if (!state.analysis || !state.selectedOptionId || !state.connectId) return;
     els.applyBtn.disabled = true;
-    setStatus("Применяем исправления…");
+    setStatus("Применяем выбранный маршрут…");
     try {
       const res = await fetch("/api/apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           track_id: state.analysis.track_id,
-          selections: state.selections,
+          selections: { [state.connectId]: state.selectedOptionId },
           export_format: els.exportFormat.value,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Ошибка применения");
-      window.location.href = data.download_path;
-      setStatus(`Скачивание: ${data.point_count} точек`);
+
+      if (data.track) {
+        state.analysis.track = data.track;
+        state.analysis.anomalies = data.anomalies || [];
+        state.analysis.summary.point_count = data.point_count;
+        state.pointA = null;
+        state.pointB = null;
+        state.pickStep = "a";
+        state.selectedOptionId = null;
+        state.connectId = null;
+        state.routeOptions = [];
+        els.routeList.hidden = true;
+        drawTrack();
+        renderSummary(state.analysis);
+        renderHints(state.analysis);
+        updatePickUI();
+      }
+
+      // Download without leaving the page so next gaps can be fixed
+      const a = document.createElement("a");
+      a.href = data.download_path;
+      a.download = "";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setStatus(`Маршрут применён (${data.point_count} точек). Файл скачан — можно чинить следующий разрыв.`);
     } catch (err) {
       setStatus(err.message || String(err), true);
     } finally {
-      els.applyBtn.disabled = false;
+      els.applyBtn.disabled = !state.selectedOptionId;
     }
   });
 
+  updatePickUI();
   checkHealth();
 })();

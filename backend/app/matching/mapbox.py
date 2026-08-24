@@ -108,7 +108,8 @@ class MapboxClient:
         start: TrackPoint,
         end: TrackPoint,
         profile: str = "driving",
-    ) -> dict[str, Any]:
+        alternatives: bool = True,
+    ) -> list[dict[str, Any]]:
         token = self._require_token()
         profile_path = PROFILE_MAP.get(profile, PROFILE_MAP["driving"])
         coords = f"{start.lon:.6f},{start.lat:.6f};{end.lon:.6f},{end.lat:.6f}"
@@ -117,6 +118,7 @@ class MapboxClient:
             "access_token": token,
             "geometries": "geojson",
             "overview": "full",
+            "alternatives": "true" if alternatives else "false",
         }
         assert self._client is not None
         resp = await self._client.get(url, params=params)
@@ -126,12 +128,17 @@ class MapboxClient:
         routes = payload.get("routes") or []
         if not routes:
             raise MapboxError("Directions returned no routes")
-        route = routes[0]
-        coords_out = (route.get("geometry") or {}).get("coordinates") or []
-        geometry = [TrackPoint(lon=c[0], lat=c[1]) for c in coords_out]
-        return {
-            "geometry": geometry,
-            "distance": route.get("distance"),
-            "duration": route.get("duration"),
-            "profile": profile,
-        }
+        out: list[dict[str, Any]] = []
+        for idx, route in enumerate(routes):
+            coords_out = (route.get("geometry") or {}).get("coordinates") or []
+            geometry = [TrackPoint(lon=c[0], lat=c[1]) for c in coords_out]
+            out.append(
+                {
+                    "geometry": geometry,
+                    "distance": route.get("distance"),
+                    "duration": route.get("duration"),
+                    "profile": profile,
+                    "alternative_index": idx,
+                }
+            )
+        return out

@@ -35,7 +35,8 @@
         <section class="panel">
           <h1>Загрузите трек</h1>
           <p class="lede">
-            GPX, KML или FIT. Сервис найдёт разрывы и скачки, предложит варианты по Mapbox Matching.
+            1) Загрузите GPX/KML/FIT. 2) На карте кликните точку разрыва (A), затем точку соединения (B).
+            3) Получите маршруты по дорогам и выберите вариант.
           </p>
 
           <form id="upload-form" class="upload">
@@ -45,7 +46,7 @@
             </label>
 
             <label class="field">
-              <span>Профиль движения</span>
+              <span>Профиль для маршрутов</span>
               <select id="profile" name="profile">
                 <option value="mixed" selected>Смешанный (driving + cycling + walking)</option>
                 <option value="driving">Авто</option>
@@ -54,16 +55,39 @@
               </select>
             </label>
 
-            <button type="submit" id="analyze-btn">Анализировать</button>
+            <button type="submit" id="analyze-btn">Загрузить на карту</button>
           </form>
 
           <div id="status" class="status" role="status"></div>
-
           <div id="summary" class="summary" hidden></div>
 
-          <section id="anomalies" class="anomalies" hidden>
-            <h2>Аномалии и варианты</h2>
-            <div id="anomaly-list"></div>
+          <section id="connect-panel" class="connect-panel" hidden>
+            <h2>Ручное соединение</h2>
+            <p class="lede small">
+              Клик по треку на карте выбирает ближайшую точку. Подсказки-разрывы можно подставить в A–B одной кнопкой.
+            </p>
+            <div class="pick-row">
+              <div class="pick-card" id="pick-a">
+                <span class="pick-label">A · разрыв</span>
+                <strong id="pick-a-val">не выбрана</strong>
+              </div>
+              <div class="pick-card" id="pick-b">
+                <span class="pick-label">B · соединение</span>
+                <strong id="pick-b-val">не выбрана</strong>
+              </div>
+            </div>
+            <div class="actions stack">
+              <button type="button" id="connect-btn" disabled>Построить маршруты A→B</button>
+              <button type="button" id="reset-picks" class="ghost" disabled>Сбросить A/B</button>
+            </div>
+
+            <div id="hint-list" class="hint-list"></div>
+
+            <div id="route-list" class="route-list" hidden>
+              <h2>Варианты маршрута</h2>
+              <div id="routes"></div>
+            </div>
+
             <div class="actions">
               <label class="field inline">
                 <span>Экспорт</span>
@@ -80,10 +104,11 @@
         <section class="map-wrap">
           <div id="map" aria-label="Карта трека"></div>
           <div class="map-legend">
-            <span><i class="swatch raw"></i> Исходный</span>
-            <span><i class="swatch anomaly"></i> Аномалия</span>
-            <span><i class="swatch fix"></i> Выбранный фикс</span>
+            <span><i class="swatch raw"></i> Сегменты трека</span>
+            <span><i class="swatch anomaly"></i> Разрыв (не соединён)</span>
+            <span><i class="swatch fix"></i> Маршрут по карте</span>
           </div>
+          <div id="map-hint" class="map-hint">Загрузите трек, затем кликните точку A и точку B</div>
         </section>
       </main>
     </div>
